@@ -5,6 +5,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include "lockfree_ring_buffer.h"
 
 struct task_list_o {
 	std::deque<coroutine> tasks;
