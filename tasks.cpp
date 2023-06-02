@@ -174,7 +174,7 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 		channels.emplace_back(
 		    new channel() ); // if this fails, then we must manually destroy the channel, otherwise we will leak the channel
 		threads.emplace_back(
-		    []( std::stop_token stop_token, channel* c ) {
+		    []( std::stop_token stop_token, channel* ch ) {
 			    using namespace std::literals::chrono_literals;
 			    // thread worker implementation:
 			    //
@@ -182,11 +182,18 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 			    //
 			    while ( !stop_token.stop_requested() ) {
 				    // spinlock
+				    coroutine_handle_t task;
+				    if ( ch->try_pop( task ) ) {
+
+					    task(); // execute task
+					    continue;
+				    }
+
 				    std::this_thread::sleep_for( 200ms );
 			    }
 
 			    // channel is owned by the thread - when the thread falls out of scope that means that the channel gets deleted
-			    delete c;
+			    delete ch;
 		    },
 		    channels.back() );
 	}
