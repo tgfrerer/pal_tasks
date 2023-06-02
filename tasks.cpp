@@ -64,7 +64,7 @@ class task_list_o {
 
 	// push a suspended task back onto the end of the task list
 	inline void push_task( coroutine_handle_t const& c ) {
-		std::cout << "pushed task: " << c.address() << std::endl;
+		// std::cout << "pushed task: " << c.address() << std::endl;
 		tasks.push( c.address() );
 	}
 
@@ -92,7 +92,7 @@ class task_list_o {
 		c.promise().p_task_list = this;
 		tasks.unsafe_initial_dynamic_push( c.address() );
 		num_tasks++;
-		std::cout << "added task: " << c.address() << std::endl;
+		// std::cout << "added task: " << c.address() << std::endl;
 	}
 
 	void tag_all_tasks_with_scheduler( scheduler_impl* p_scheduler ) {
@@ -161,7 +161,9 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 		num_worker_threads = std::jthread::hardware_concurrency() + num_worker_threads;
 	}
 
-	assert( num_worker_threads >= 0 && "inferred number of worker threads must not be negative" );
+	assert( num_worker_threads >= 0 && "Inferred number of worker threads must not be negative" );
+
+	std::cout << "Initializing scheduler with " << num_worker_threads << " worker threads" << std::endl;
 
 	// reserve memory so that we can take addresses for channel
 	// and don't have to worry about iterator validity
@@ -222,7 +224,7 @@ void scheduler_impl::wait_for_task_list( task_list_t& p_t ) {
 
 		if ( c == nullptr ) {
 			// This thread is starved of work -- we must wait for the worker threads to finish up...
-			std::cout << "WARNING: main thread is starved of work." << std::endl;
+			std::cout << "WARNING: Waiting on task list completion" << std::endl;
 			std::this_thread::sleep_for( std::chrono::nanoseconds( 10 ) );
 			continue;
 		}
@@ -234,7 +236,7 @@ void scheduler_impl::wait_for_task_list( task_list_t& p_t ) {
 		// with this channel.
 
 		if ( move_task_to_worker_thread( c ) ) {
-			// pushing consumes the coroutine handle - that is becomes owned by the channel
+			// pushing consumes the coroutine handle - that is, it becomes owned by the channel
 			// who owns it for the worker thread.
 			// handle was successfully offloaded to a worker thread.
 			// the worker thread must now execute the payload, and
