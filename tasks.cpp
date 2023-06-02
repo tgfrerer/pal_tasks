@@ -189,7 +189,7 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 					    continue;
 				    }
 
-				    std::this_thread::sleep_for( 200ms );
+				    std::this_thread::sleep_for( 100ns );
 			    }
 
 			    // channel is owned by the thread - when the thread falls out of scope that means that the channel gets deleted
