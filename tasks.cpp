@@ -9,6 +9,45 @@
 
 using coroutine_handle_t = std::coroutine_handle<promise>;
 
+static void* null_handle = nullptr;
+
+struct channel {
+	// add channel where we can block until there is something to read
+	lockfree_ring_buffer_t buffer{ 1 };
+
+	bool try_push( coroutine_handle_t& h ) {
+		if ( buffer.try_push( h.address() ) ) {
+			h = nullptr;
+			return true;
+		}
+		return false;
+	}
+	bool try_pop( coroutine_handle_t& h ) {
+		void* result = buffer.try_pop();
+		if ( nullptr == result ) {
+			return false;
+		} else {
+			h = coroutine_handle_t::from_address( result );
+			return true;
+		}
+	}
+
+	~channel() {
+		// we must cleanup any leftover tasks.
+
+		if ( this->buffer.size() ) {
+			std::cout << "WARNING: leftover tasks in channel." << std::endl;
+		}
+
+		for ( void* task = this->buffer.try_pop(); task != nullptr; task = this->buffer.try_pop() ) {
+			std::cout << "destroying task: " << task << std::endl;
+			task::from_address( task ).destroy();
+		}
+
+		std::cout << "deleting channel." << std::endl;
+	}
+};
+
 class task_list_o {
 	lockfree_ring_buffer_t tasks;
 	std::atomic_size_t     num_tasks; // number of tasks, only gets decremented if taks has been removed
@@ -29,20 +68,17 @@ class task_list_o {
 	}
 
 	// push a suspended task back onto the end of the task list
-	void push_task( coroutine_handle_t const& c ) {
+	inline void push_task( coroutine_handle_t const& c ) {
 		std::cout << "pushed task: " << c.address() << std::endl;
 		tasks.push( c.address() );
 	}
 
 	// Get the next task if possible,
 	// if there is no next task, return an empty coroutine handle
-	coroutine_handle_t pop_task() {
-		void* p_task = tasks.pop();
-		if ( nullptr == p_task ) {
-			return {};
-		}
+	// an empty coroutine handle will compare true to nullptr
+	inline coroutine_handle_t pop_task() {
 		// invariant: tasks is not empty
-		return task::from_address( p_task );
+		return task::from_address( tasks.try_pop() );
 	}
 
 	// Return the number of tasks which are both in flight and waiting
@@ -51,7 +87,7 @@ class task_list_o {
 	// processed and are in flight will not show up on the task list.
 	//
 	// num_tasks gets decremented only if a task was fully completed.
-	size_t get_tasks_count() {
+	inline size_t get_tasks_count() {
 		return num_tasks;
 	}
 
@@ -97,10 +133,12 @@ task_list_t::~task_list_t() {
 // ----------------------------------------------------------------------
 
 class scheduler_impl {
+
+	bool push_to_worker_threads( coroutine_handle_t& c );
+
   public:
 	std::vector<channel*>     channels; // non-owning - channels are owned by their threads
 	std::vector<std::jthread> threads;
-
 
 	scheduler_impl( int32_t num_worker_threads = 0 );
 
@@ -180,7 +218,34 @@ void scheduler_impl::wait_for_task_list( task_list_t& p_t ) {
 	// back together again.
 	while ( p_t.p_impl->get_tasks_count() ) {
 		coroutine_handle_t c = ( p_t.p_impl )->pop_task();
-		if ( !c.done() ) {
+
+		//
+		if ( c == nullptr ) {
+			//
+			// This thread is starved of work -- we must wait for the worker threads to finish up...
+			std::this_thread::sleep_for( std::chrono::nanoseconds( 10 ) );
+			continue;
+		}
+
+		// ----------| invariant: current coroutine is valid
+
+		// Find a free channel. if there is, then place this handle in the channel,
+		// which means that it will be executed on the worker thread associated
+		// with this channel.
+
+		if ( push_to_worker_threads( c ) ) {
+			// pushing consumes the coroutine handle - that is becomes owned by the channel
+			// who owns it for the worker thread.
+			// handle was successfully offloaded to a worker thread.
+			// the worker thread must now execute the payload, and
+			// the task will  decrement the counter for this tasklist
+			// upon completion.
+			continue;
+		}
+
+		// --------| Invariant: All worker threads are busy - we must execute on this thread
+
+		if ( c != nullptr && !c.done() ) {
 			c();
 		} else {
 			assert( false && "task must not be done" );
@@ -190,6 +255,18 @@ void scheduler_impl::wait_for_task_list( task_list_t& p_t ) {
 	// Once all tasks have been complete, release task list
 	delete p_t.p_impl;    // Free task list impl
 	p_t.p_impl = nullptr; // Signal any future uses that this task list has been used already
+}
+
+// ----------------------------------------------------------------------
+
+inline bool scheduler_impl::push_to_worker_threads( coroutine_handle_t& c ) {
+	// iterate over all channels. if we can place the coroutine ont
+	for ( auto& ch : channels ) {
+		if ( true == ch->try_push( c ) ) {
+			return true;
+		};
+	}
+	return false;
 }
 
 // ----------------------------------------------------------------------

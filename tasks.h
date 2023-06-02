@@ -29,13 +29,6 @@ struct finalize_task {
 	void await_resume() noexcept {};
 };
 
-struct channel {
-	// add channel where we can block until there is something to read
-	~channel() {
-		std::cout << "deleting channel." << std::endl
-		          << std::flush;
-	}
-};
 
 class scheduler_impl;              // ffdecl, pimpl
 struct task_list_o;                // ffdecl
