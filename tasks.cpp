@@ -134,7 +134,7 @@ task_list_t::~task_list_t() {
 
 class scheduler_impl {
 
-	bool push_to_worker_threads( coroutine_handle_t& c );
+	bool move_task_to_worker_thread( coroutine_handle_t& c );
 
   public:
 	std::vector<channel*>     channels; // non-owning - channels are owned by their threads
@@ -219,10 +219,9 @@ void scheduler_impl::wait_for_task_list( task_list_t& p_t ) {
 	while ( p_t.p_impl->get_tasks_count() ) {
 		coroutine_handle_t c = ( p_t.p_impl )->pop_task();
 
-		//
 		if ( c == nullptr ) {
-			//
 			// This thread is starved of work -- we must wait for the worker threads to finish up...
+			std::cout << "WARNING: main thread is starved of work." << std::endl;
 			std::this_thread::sleep_for( std::chrono::nanoseconds( 10 ) );
 			continue;
 		}
@@ -233,7 +232,7 @@ void scheduler_impl::wait_for_task_list( task_list_t& p_t ) {
 		// which means that it will be executed on the worker thread associated
 		// with this channel.
 
-		if ( push_to_worker_threads( c ) ) {
+		if ( move_task_to_worker_thread( c ) ) {
 			// pushing consumes the coroutine handle - that is becomes owned by the channel
 			// who owns it for the worker thread.
 			// handle was successfully offloaded to a worker thread.
@@ -259,8 +258,9 @@ void scheduler_impl::wait_for_task_list( task_list_t& p_t ) {
 
 // ----------------------------------------------------------------------
 
-inline bool scheduler_impl::push_to_worker_threads( coroutine_handle_t& c ) {
-	// iterate over all channels. if we can place the coroutine ont
+inline bool scheduler_impl::move_task_to_worker_thread( coroutine_handle_t& c ) {
+	// iterate over all channels. if we can place the coroutine
+	// on a channel, do so.
 	for ( auto& ch : channels ) {
 		if ( true == ch->try_push( c ) ) {
 			return true;
