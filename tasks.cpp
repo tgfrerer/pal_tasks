@@ -53,7 +53,7 @@ class task_list_o {
 	std::atomic_size_t     num_tasks; // number of tasks, only gets decremented if taks has been removed
 
   public:
-	task_list_o( uint32_t capacity_hint = 1 ) // start with capacity of 1
+	task_list_o( uint32_t capacity_hint = 32 ) // start with capacity of 32
 	    : tasks( capacity_hint )
 	    , num_tasks( 0 ) {
 	}
