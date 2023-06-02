@@ -184,7 +184,6 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 				    // spinlock
 				    coroutine_handle_t task;
 				    if ( ch->try_pop( task ) ) {
-
 					    task(); // execute task
 					    continue;
 				    }
