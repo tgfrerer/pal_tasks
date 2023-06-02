@@ -24,7 +24,7 @@ struct channel {
 	}
 	bool try_pop( coroutine_handle_t& h ) {
 		h = coroutine_handle_t::from_address( buffer.try_pop() );
-		return h == nullptr;
+		return h != nullptr; // we were only successful if we retrieved an actual coroutine
 	}
 
 	~channel() {
