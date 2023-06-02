@@ -5,7 +5,7 @@
 
 struct promise; // ffdecl.
 
-struct coroutine : std::coroutine_handle<promise> {
+struct task : std::coroutine_handle<promise> {
 	using promise_type = ::promise;
 };
 
@@ -39,7 +39,7 @@ struct channel {
 
 class scheduler_impl;              // ffdecl, pimpl
 struct task_list_o;                // ffdecl
-using task_list_t = task_list_o**; // helper
+class task_list_t;                 // ffdecl
 
 class scheduler_o {
 	scheduler_impl* p_impl = nullptr;
@@ -53,22 +53,41 @@ class scheduler_o {
 
   public:
 	// create a new task list object
-	task_list_o** new_task_list();
+	task_list_t new_task_list();
 
-	// add new objects to a task list object
-	void add_to_task_list( task_list_o** p_t, coroutine c );
+	// add coroutines to a task list object
 
 	// execute all tasks in the task list, then free the task list object
-	void wait_for_task_list( task_list_o** p_t );
+	// this takes possession of the task list object.
+	void wait_for_task_list( task_list_t& p_t );
 
 	static scheduler_o* create( int32_t num_worker_threads = 0 );
 
 	~scheduler_o();
 };
 
+class task_list_t {
+
+	task_list_o* p_impl; // owning
+
+	task_list_t( const task_list_t& )            = delete;
+	task_list_t( task_list_t&& )                 = delete; // move constructor
+	task_list_t& operator=( const task_list_t& ) = delete;
+	task_list_t& operator=( task_list_t&& )      = delete; // move assignment
+
+  public:
+	task_list_t( uint32_t hint_capacity = 1 ); // default constructor
+
+	~task_list_t();
+
+	void add_task( task c );
+
+	friend class scheduler_impl;
+};
+
 struct promise {
-	coroutine get_return_object() {
-		return { coroutine::from_promise( *this ) };
+	task get_return_object() {
+		return { task::from_promise( *this ) };
 	}
 	scheduled_task initial_suspend() noexcept {
 		return {};
@@ -79,5 +98,5 @@ struct promise {
 	void            return_void(){};
 	void            unhandled_exception(){};
 	scheduler_impl* scheduler   = nullptr; // owned by scheduler
-	task_list_t     p_task_list = nullptr; // owned by scheduler
+	task_list_o*    p_task_list = nullptr; // owned by scheduler
 };

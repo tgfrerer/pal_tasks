@@ -9,7 +9,6 @@ set(SOURCES main.cpp)
 set(SOURCES ${SOURCES} tasks.cpp)
 set(SOURCES ${SOURCES} tasks.h)
 set(SOURCES ${SOURCES} lockfree_ring_buffer.h)
-set(SOURCES ${SOURCES} lockfree_ring_buffer.cpp)
 
 add_executable(coro ${SOURCES})
 
