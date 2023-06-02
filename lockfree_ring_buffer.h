@@ -65,7 +65,7 @@ class lockfree_ring_buffer_t {
 	    , buffer( m_size, nullptr ) {
 		assert( power_of_2_size && power_of_2_size < 32 );
 	}
-	size_t size( const lockfree_ring_buffer_t* rb ) {
+	size_t size() {
 		// read high first; make it look less than or equal to its actual size
 		const uint64_t high = this->m_high.load( std::memory_order_acquire );
 		// load_load_barrier();
