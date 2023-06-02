@@ -23,13 +23,8 @@ struct channel {
 		return false;
 	}
 	bool try_pop( coroutine_handle_t& h ) {
-		void* result = buffer.try_pop();
-		if ( nullptr == result ) {
-			return false;
-		} else {
-			h = coroutine_handle_t::from_address( result );
-			return true;
-		}
+		h = coroutine_handle_t::from_address( buffer.try_pop() );
+		return h == nullptr;
 	}
 
 	~channel() {
