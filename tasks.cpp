@@ -307,7 +307,7 @@ void scheduled_task::await_suspend( std::coroutine_handle<promise> h ) noexcept 
 
 		task_list->push_task( h.promise().get_return_object() );
 
-		if ( false ) {
+		if ( true ) {
 			// take next task from front of scheduler queue -
 			// we can do this so that multiple threads can share the
 			// scheduling workload potentially.
@@ -316,7 +316,7 @@ void scheduled_task::await_suspend( std::coroutine_handle<promise> h ) noexcept 
 			// queue.
 			coroutine_handle_t c = task_list->pop_task();
 
-			if ( !c.done() ) {
+			if ( c && !c.done() ) {
 				c();
 			} else {
 				assert( false && "task must not be done" );
