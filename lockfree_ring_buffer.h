@@ -48,7 +48,7 @@ class lockfree_ring_buffer_t {
 	char               _cache_padding1[ 64 - sizeof( std::atomic_size_t ) ];
 	std::atomic_size_t m_low;
 	char               _cache_padding2[ 64 - sizeof( std::atomic_size_t ) ];
-	uint32_t           m_size;
+	uint32_t           m_capacity;
 	uint32_t           m_power_of_2_mod;
 	// buffer must be last - it spills outside of this struct
 	std::vector<void*> buffer;
@@ -60,9 +60,9 @@ class lockfree_ring_buffer_t {
 
   public:
 	lockfree_ring_buffer_t( uint32_t power_of_2_size )
-	    : m_size( next_power_of_2( power_of_2_size ) )
-	    , m_power_of_2_mod( m_size - 1 )
-	    , buffer( m_size, nullptr ) {
+	    : m_capacity( next_power_of_2( power_of_2_size ) )
+	    , m_power_of_2_mod( m_capacity - 1 )
+	    , buffer( m_capacity, nullptr ) {
 		assert( power_of_2_size && power_of_2_size < 32 );
 	}
 	size_t size() {
@@ -81,7 +81,7 @@ class lockfree_ring_buffer_t {
 		uint64_t       high  = this->m_high.load( std::memory_order_acquire );
 		const uint64_t index = high & this->m_power_of_2_mod;
 		if ( !this->buffer[ index ] &&
-		     high - low < this->m_size &&
+		     high - low < this->m_capacity &&
 		     this->m_high.compare_exchange_weak( high, high + 1, std::memory_order_release ) ) {
 			this->buffer[ index ] = in;
 			return 1;
@@ -91,7 +91,7 @@ class lockfree_ring_buffer_t {
 
 	void push( void* in ) {
 		while ( !this->try_push( in ) ) {
-			if ( this->m_high - this->m_low >= this->m_size ) {
+			if ( this->m_high - this->m_low >= this->m_capacity ) {
 				// the buffer is full - we must block...
 				std::this_thread::sleep_for( std::chrono::nanoseconds( 100 ) );
 			}
@@ -137,10 +137,10 @@ class lockfree_ring_buffer_t {
 	// there is more than one thread modifying the buffer, as it is then unsafe.
 	int unsafe_initial_dynamic_push( void* in ) {
 		assert( m_low == 0 && "you must not unsafe push once an item has been popped from this array" );
-		if ( this->m_high - this->m_low >= this->m_size ) {
-			this->m_size *= 2; // double size
-			this->buffer.resize( m_size, nullptr );
-			this->m_power_of_2_mod = this->m_size - 1;
+		if ( this->m_high - this->m_low >= this->m_capacity ) {
+			this->m_capacity *= 2; // double size
+			this->buffer.resize( m_capacity, nullptr );
+			this->m_power_of_2_mod = this->m_capacity - 1;
 		}
 		return try_push( in );
 	}
