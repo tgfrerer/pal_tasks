@@ -20,15 +20,17 @@ class task_list_o {
 	}
 
 	~task_list_o() {
-		// if there are any tasks left on the task list, we must destroy them
+		// if there are any tasks left on the task list, we must destroy them, as we own them.
 		std::cout << "destroying task list_o" << std::endl;
-		for ( void* task = this->tasks.try_pop(); task != nullptr; task = this->tasks.pop() ) {
+		for ( void* task = this->tasks.try_pop(); task != nullptr; task = this->tasks.try_pop() ) {
+			std::cout << "destroying task: " << task << std::endl;
 			task::from_address( task ).destroy();
 		}
 	}
 
 	// push a suspended task back onto the end of the task list
 	void push_task( coroutine_handle_t const& c ) {
+		std::cout << "pushed task: " << c.address() << std::endl;
 		tasks.push( c.address() );
 	}
 
@@ -59,13 +61,15 @@ class task_list_o {
 		c.promise().p_task_list = this;
 		tasks.unsafe_initial_dynamic_push( c.address() );
 		num_tasks++;
+		std::cout << "added task: " << c.address() << std::endl;
 	}
 
-	void tag_all_tasks_with_scheduler( scheduler_impl* s ) {
-		tasks.unsafe_for_each( []( void* c, void* s ) {
-			coroutine_handle_t::from_address( c ).promise().scheduler = static_cast<scheduler_impl*>( s );
-		},
-		                       s );
+	void tag_all_tasks_with_scheduler( scheduler_impl* p_scheduler ) {
+		tasks.unsafe_for_each(
+		    []( void* c, void* p_scheduler ) {
+			    coroutine_handle_t::from_address( c ).promise().scheduler = static_cast<scheduler_impl*>( p_scheduler );
+		    },
+		    p_scheduler );
 	}
 
 	void decrement_task_count() {
