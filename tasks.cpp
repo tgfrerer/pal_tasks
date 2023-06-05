@@ -14,8 +14,16 @@ static void* null_handle = nullptr;
 struct channel {
 	// add channel where we can block until there is something to read
 	lockfree_ring_buffer_t buffer{ 1 };
+	std::atomic_flag       flag{ false }; // signal that the current thread is busy.
 
 	bool try_push( coroutine_handle_t& h ) {
+
+		if ( flag.test( std::memory_order_relaxed ) ) {
+			// if the current channel is busy, do not
+			// add anymore work.
+			return false;
+		}
+
 		if ( buffer.try_push( h.address() ) ) {
 			h = nullptr;
 			return true;
@@ -186,7 +194,9 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 				    // spinlock
 				    coroutine_handle_t task;
 				    if ( ch->try_pop( task ) ) {
+					    ch->flag.test_and_set( std::memory_order_acquire );
 					    task(); // execute task
+					    ch->flag.clear( std::memory_order_release );
 					    continue;
 				    }
 
@@ -224,7 +234,7 @@ void scheduler_impl::wait_for_task_list( task_list_t& p_t ) {
 
 		if ( c == nullptr ) {
 			// This thread is starved of work -- we must wait for the worker threads to finish up...
-			std::cout << "WARNING: Waiting on task list completion" << std::endl;
+			// std::cout << "WARNING: Waiting on task list completion" << std::endl;
 			std::this_thread::sleep_for( std::chrono::nanoseconds( 10 ) );
 			continue;
 		}
