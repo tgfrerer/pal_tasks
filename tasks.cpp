@@ -9,43 +9,43 @@
 
 using coroutine_handle_t = std::coroutine_handle<promise>;
 
-static void* null_handle = nullptr;
 
 struct channel {
 	// add channel where we can block until there is something to read
-	lockfree_ring_buffer_t buffer{ 1 };
+	void*                  handle;
 	std::atomic_flag       flag{ false }; // signal that the current thread is busy.
 
 	bool try_push( coroutine_handle_t& h ) {
 
-		if ( flag.test( std::memory_order_relaxed ) ) {
-			// if the current channel is busy, do not
+		if ( flag.test_and_set( std::memory_order_acquire ) ) {
+			// if the current channel was already flagged
 			// add anymore work.
 			return false;
 		}
 
-		if ( buffer.try_push( h.address() ) ) {
-			h = nullptr;
-			return true;
-		}
-		return false;
+		// --------| invariant: current channel is available now
+
+		handle = h.address();
+		return true;
 	}
 	bool try_pop( coroutine_handle_t& h ) {
-		h = coroutine_handle_t::from_address( buffer.try_pop() );
-		return h != nullptr; // we were only successful if we retrieved an actual coroutine
+		if ( this->handle ) {
+			h = coroutine_handle_t::from_address( this->handle );
+			return true;
+		}
+		return false; // we were only successful if we retrieved an actual coroutine
 	}
 
 	~channel() {
 		// we must cleanup any leftover tasks.
 
-		if ( this->buffer.size() ) {
-			std::cout << "WARNING: leftover tasks in channel." << std::endl;
+		if ( this->handle ) {
+			std::cout << "WARNING: leftover task in channel." << std::endl;
+			std::cout << "destroying task: " << this->handle << std::endl;
+			task::from_address( this->handle ).destroy();
 		}
 
-		for ( void* task = this->buffer.try_pop(); task != nullptr; task = this->buffer.try_pop() ) {
-			std::cout << "destroying task: " << task << std::endl;
-			task::from_address( task ).destroy();
-		}
+		this->handle = nullptr;
 
 		std::cout << "deleting channel." << std::endl;
 	}
@@ -194,8 +194,8 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 				    // spinlock
 				    coroutine_handle_t task;
 				    if ( ch->try_pop( task ) ) {
-					    ch->flag.test_and_set( std::memory_order_acquire );
 					    task(); // execute task
+					    ch->handle = nullptr;
 					    ch->flag.clear( std::memory_order_release );
 					    continue;
 				    }
