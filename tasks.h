@@ -10,20 +10,14 @@ struct task : std::coroutine_handle<promise> {
 
 struct scheduled_task {
 	// if await_ready is false, then await_suspend will be called
-	bool await_ready() noexcept {
-		return false;
-	};
-
+	bool await_ready() noexcept { return false; };
 	void await_suspend( std::coroutine_handle<::promise> h ) noexcept;
 	void await_resume() noexcept {};
 };
 
 struct finalize_task {
 	// if await_ready is false, then await_suspend will be called
-	bool await_ready() noexcept {
-		return false;
-	};
-
+	bool await_ready() noexcept { return false; };
 	void await_suspend( std::coroutine_handle<::promise> h ) noexcept;
 	void await_resume() noexcept {};
 };
@@ -78,15 +72,9 @@ class task_list_t {
 };
 
 struct promise {
-	task get_return_object() {
-		return { task::from_promise( *this ) };
-	}
-	scheduled_task initial_suspend() noexcept {
-		return {};
-	}
-	finalize_task final_suspend() noexcept {
-		return {};
-	}
+	task            get_return_object() { return { task::from_promise( *this ) }; }
+	scheduled_task  initial_suspend() noexcept { return {}; }
+	finalize_task   final_suspend() noexcept { return {}; }
 	void            return_void(){};
 	void            unhandled_exception(){};
 	scheduler_impl* scheduler   = nullptr; // owned by scheduler
