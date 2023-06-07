@@ -56,9 +56,10 @@ class task_list_o {
 
 	~task_list_o() {
 		// if there are any tasks left on the task list, we must destroy them, as we own them.
-		std::cout << "destroying task list_o" << std::endl;
-		for ( void* task = this->tasks.try_pop(); task != nullptr; task = this->tasks.try_pop() ) {
-			std::cout << "destroying task: " << task << std::endl;
+		std::cout << "Destroying task list" << std::endl;
+		void* task;
+		while ( ( task = this->tasks.try_pop() ) ) {
+			std::cout << "Destroying task: " << task << std::endl;
 			task::from_address( task ).destroy();
 		}
 	}
