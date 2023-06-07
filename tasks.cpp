@@ -303,12 +303,13 @@ scheduler_o::~scheduler_o() {
 // ----------------------------------------------------------------------
 
 void scheduled_task::await_suspend( std::coroutine_handle<promise> h ) noexcept {
-	// At this point the coroutine pointed to by h has been fully suspended.
-	//
+	// ----------| Invariant: At this point the coroutine pointed
+	//                        to by h has been fully suspended.
+	//                        This is guaranteed by std::coroutine.
 
-	// check if we have a scheduler available via the promise.
+	// Check if we have a scheduler available via the promise.
 	//
-	// if not, we have not been placed onto the scheduler,
+	// If not, we have not been placed onto the scheduler,
 	// and we should not start execution yet.
 	if ( h.promise().scheduler ) {
 		auto& scheduler = h.promise().scheduler;
@@ -318,13 +319,17 @@ void scheduled_task::await_suspend( std::coroutine_handle<promise> h ) noexcept 
 
 		task_list->push_task( h.promise().get_return_object() );
 
+		// enables or disables eager work-stealing
 		if ( true ) {
+
 			// take next task from front of scheduler queue -
 			// we can do this so that multiple threads can share the
 			// scheduling workload potentially.
+			//
 			// but we can also disable that, so that there is only one thread
 			// that does the scheduling, and that removes elements from the
 			// queue.
+
 			coroutine_handle_t c = task_list->pop_task();
 
 			if ( c && !c.done() ) {
@@ -332,27 +337,17 @@ void scheduled_task::await_suspend( std::coroutine_handle<promise> h ) noexcept 
 			} else {
 				assert( false && "task must not be done" );
 			}
-
-			// TODO: we should remove a task that is being processed from the scheduler.
-			//
-			// TODO: we can add the current handle back onto the scheduler -
-			// as it goes into suspension, the scheduler will have to pick it up again.
-			// we add it at the end of the list of tasks so that the scheduler can spend
-			// some time with other tasks first.
-
-			// TODO: then the scheduler picks the next element from the list
-			// and executes that one.
 		}
 	}
 
-	// note: if we drop off here, we must do so whilst being in the scheduling thread -
+	// Note: If we drop off here, we must do so whilst being in the scheduling thread -
 	// as this will return to where the resume() command was issued.
 }
 
 // ----------------------------------------------------------------------
 
 void finalize_task::await_suspend( std::coroutine_handle<promise> h ) noexcept {
-	// this is the last time that the coroutine will be awakened
+	// This is the last time that this coroutine will be awakened
 	// we do not suspend it anymore after this
 	h.promise().p_task_list->decrement_task_count();
 	std::cout << "Final suspend for coroutine." << std::endl
