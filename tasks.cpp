@@ -248,7 +248,10 @@ void scheduler_impl::wait_for_task_list( task_list_t& p_t ) {
 			// before we can progress further.
 			if ( p_t.p_impl->block_flag.test_and_set() ) {
 				std::cout << "blocking main thread on [" << p_t.p_impl << "]" << std::endl;
-				p_t.p_impl->block_flag.wait( true ); // Signalled whenever the task count decreases
+				// Wait for the flag to be set - this is the case if any of these happen:
+				//    * the scheduler is destroyed
+				//    * the last task of the task list has completed, and the task list is now empty.
+				p_t.p_impl->block_flag.wait( true );
 				std::cout << "resuming main thread on [" << p_t.p_impl << "]" << std::endl;
 			}
 			continue;
