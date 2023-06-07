@@ -150,26 +150,26 @@ class scheduler_impl {
 	scheduler_impl( int32_t num_worker_threads = 0 );
 
 	~scheduler_impl() {
-		// deletes whether last_list is nullptr or not.
-		// we must wait until all the threads have been joined.
-		// tell all threads to join
-		// deleting a jthread object implicitly stops and joins
+		// We must unblock any threads which are currently waiting on a flag signal for more work
+		// as there is no more work coming, we must artificially signal the flag so that these
+		// worker threads can resume to completion.
 		for ( auto* c : channels ) {
 			if ( c ) {
-				c->flag.test_and_set(); // set to true so that notify works reliably
-				c->flag.notify_all();
+				c->flag.test_and_set(); // Set flag so that if there is a worker blocked on this flag, it may proceed.
+				c->flag.notify_one();   // Notify the worker thread (if any worker thread is waiting) that the flag has flipped.
+				                        // without notify, waiters will not be notified that the flag has flipped.
 			}
 		}
+		// We must wait until all the threads have been joined.
+		// Deleting a jthread object implicitly stops (sets the stop_token) and joins.
 		threads.clear();
 	}
 
-	// execute all tasks in the task list, then free the task list object
+	// Execute all tasks in the task list, then invalidate the task list object
 	void wait_for_task_list( task_list_t& p_t );
 };
 
 scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
-	// todo: create a threadpool, and initialise threads with spinwaits
-	// and somehow add a method to push a coroutine to the thread.
 
 	if ( num_worker_threads < 0 ) {
 		// If negative, then this means that we must
@@ -181,7 +181,7 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 
 	std::cout << "Initializing scheduler with " << num_worker_threads << " worker threads" << std::endl;
 
-	// reserve memory so that we can take addresses for channel
+	// Reserve memory so that we can take addresses for channel,
 	// and don't have to worry about iterator validity
 	channels.reserve( num_worker_threads );
 	threads.reserve( num_worker_threads );
@@ -189,25 +189,24 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 	// NOTE THAT BY DEFAULT WE DON'T HAVE ANY WORKER THREADS
 	//
 	for ( int i = 0; i != num_worker_threads; i++ ) {
-		channels.emplace_back( new channel() ); // if this fails, then we must manually destroy the channel, otherwise we will leak the channel
+		channels.emplace_back( new channel() );
 		threads.emplace_back(
+		    //
+		    // Thread worker implementation
+		    //
 		    []( std::stop_token stop_token, channel* ch ) {
-			    using namespace std::literals::chrono_literals;
-
-			    // thread worker implementation
-			    //
 			    while ( !stop_token.stop_requested() ) {
 
 				    if ( ch->handle ) {
-					    coroutine_handle_t task = coroutine_handle_t::from_address( ch->handle );
-					    task(); // execute task
+					    coroutine_handle_t::from_address( ch->handle ).resume(); // resume coroutine
 					    ch->handle = nullptr;
 					    // signal that we are ready to receive new tasks
 					    ch->flag.clear( std::memory_order_release );
 					    continue;
 				    }
 
-				    // wait for flag to become true - this means that a new job has been queued up
+				    // Wait for flag to be set - which means that a new job has been placed in the channel
+				    // or that the current tasklist has completed.
 				    ch->flag.wait( false, std::memory_order_acquire );
 				    // std::cout << "flag unblocked" << std::endl;
 			    }
@@ -226,31 +225,27 @@ void scheduler_impl::wait_for_task_list( task_list_t& p_t ) {
 		assert( false && "Task list must have been initialised. Has this task list been waited for already?" );
 		return;
 	}
-	// --------| invariant: task list exists
-	//
+
+	// --------| Invariant: task list is valid
+
 	// Execute tasks in this task list until there are no more tasks left
 	// to execute.
 
-	// before we start executing tasks we must take ownership of them
-	// by tagging them so that they know which scheduler they belong to:
+	// Before we start executing tasks we must take ownership of them
+	// by tagging them so that they know which scheduler they belong to.
 	p_t.p_impl->tag_all_tasks_with_scheduler( this );
 
-	// we would split the work here onto multiple threads -
-	// the threads would then potentially steal work etc
-	// but this thread here will be the one that brings everything
-	// back together again.
+	// Distribute work, as long as there is work to distribute
 	while ( p_t.p_impl->get_tasks_count() ) {
 		coroutine_handle_t c = ( p_t.p_impl )->pop_task();
 
 		if ( c == nullptr ) {
-			// This thread is starved of work -- we must wait for the worker threads to finish up...
-			// std::cout << "WARNING: Waiting on task list completion" << std::endl;
+			// This thread is starved of work -- we must wait for the worker threads to complete
+			// before we can progress further.
 			if ( p_t.p_impl->block_flag.test_and_set() ) {
-				// if we can acquire a block flag, we will wait on the main thread until the first
-				// worker completes
-					// std::cout << "blocking main thread." << std::endl;
-					p_t.p_impl->block_flag.wait( true );
-				// std::cout << "main thread unblocked" << std::endl;
+				std::cout << "blocking main thread on [" << p_t.p_impl << "]" << std::endl;
+				p_t.p_impl->block_flag.wait( true ); // Signalled whenever the task count decreases
+				std::cout << "resuming main thread on [" << p_t.p_impl << "]" << std::endl;
 			}
 			continue;
 		}
@@ -288,12 +283,12 @@ void scheduler_impl::wait_for_task_list( task_list_t& p_t ) {
 // ----------------------------------------------------------------------
 
 inline bool scheduler_impl::move_task_to_worker_thread( coroutine_handle_t& c ) {
-	// iterate over all channels. if we can place the coroutine
+	// Iterate over all channels. if we can place the coroutine
 	// on a channel, do so.
 	for ( auto& ch : channels ) {
 		if ( true == ch->try_push( c ) ) {
 			return true;
-		};
+		}
 	}
 	return false;
 }
@@ -320,8 +315,7 @@ scheduler_o::~scheduler_o() {
 
 void schedule_task::await_suspend( std::coroutine_handle<promise> h ) noexcept {
 	// ----------| Invariant: At this point the coroutine pointed
-	//                        to by h has been fully suspended.
-	//                        This is guaranteed by std::coroutine.
+	// to by h has been fully suspended. This is guaranteed by the Standard.
 
 	// Check if we have a scheduler available via the promise.
 	//
