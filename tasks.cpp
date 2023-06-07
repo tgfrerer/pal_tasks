@@ -187,8 +187,7 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 	// NOTE THAT BY DEFAULT WE DON'T HAVE ANY WORKER THREADS
 	//
 	for ( int i = 0; i != num_worker_threads; i++ ) {
-		channels.emplace_back(
-		    new channel() ); // if this fails, then we must manually destroy the channel, otherwise we will leak the channel
+		channels.emplace_back( new channel() ); // if this fails, then we must manually destroy the channel, otherwise we will leak the channel
 		threads.emplace_back(
 		    []( std::stop_token stop_token, channel* ch ) {
 			    using namespace std::literals::chrono_literals;
