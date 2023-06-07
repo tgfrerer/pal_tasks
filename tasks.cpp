@@ -302,7 +302,7 @@ scheduler_o::~scheduler_o() {
 
 // ----------------------------------------------------------------------
 
-void scheduled_task::await_suspend( std::coroutine_handle<promise> h ) noexcept {
+void schedule_task::await_suspend( std::coroutine_handle<promise> h ) noexcept {
 	// ----------| Invariant: At this point the coroutine pointed
 	//                        to by h has been fully suspended.
 	//                        This is guaranteed by std::coroutine.

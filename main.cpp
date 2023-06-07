@@ -7,7 +7,7 @@
 int main() {
 	// we would like a syntax that goes:
 
-	scheduler_o* scheduler = scheduler_o::create( 9 ); // create a scheduler with two hardware worker threads
+	scheduler_o* scheduler = scheduler_o::create( -1 ); // create a scheduler with two hardware worker threads
 
 	srand( 0xdeadbeef );
 
@@ -21,11 +21,11 @@ int main() {
                       << std::flush;
 
             std::this_thread::sleep_for( std::chrono::milliseconds( rand() % 20 ) );
-            // this yields control5 back to the await_suspend method, and to our scheduler
-            co_await scheduled_task();
+			// this yields control5 back to the await_suspend method, and to our scheduler
+			co_await schedule_task();
 
-            std::this_thread::sleep_for( std::chrono::milliseconds( rand() % 20 ) );
-            std::cout << "executing coroutine: " << std::dec << i++ << " on thread: " << std::hex << std::this_thread::get_id() << std::endl;
+			std::this_thread::sleep_for( std::chrono::milliseconds( rand() % 20 ) );
+			std::cout << "executing coroutine: " << std::dec << i++ << " on thread: " << std::hex << std::this_thread::get_id() << std::endl;
             co_return;
 		};
 
@@ -50,20 +50,20 @@ int main() {
 
             std::this_thread::sleep_for( std::chrono::milliseconds( rand() % 20 ) );
 
-            task_list_t inner_task_list{};
+			task_list_t inner_task_list{};
 
-            auto inner_coro_generator = []( int i, int j ) -> task {
-                std::cout << "\t executing inner coroutine: " << std::dec << i << ":" << j++ << " on thread: " << std::hex << std::this_thread::get_id() << std::endl
+			auto inner_coro_generator = []( int i, int j ) -> task {
+				std::cout << "\t executing inner coroutine: " << std::dec << i << ":" << j++ << " on thread: " << std::hex << std::this_thread::get_id() << std::endl
                           << std::flush;
 
                 std::this_thread::sleep_for( std::chrono::milliseconds( rand() % 10 ) );
-                // this yields control back to the await_suspend method, and to our scheduler
-                co_await scheduled_task();
+				// this yields control back to the await_suspend method, and to our scheduler
+				co_await schedule_task();
 
-                std::this_thread::sleep_for( std::chrono::milliseconds( rand() % 20 ) );
-                std::cout << "\t executing inner coroutine: " << std::dec << i << ":" << j++ << " on thread: " << std::hex << std::this_thread::get_id() << std::endl;
-                co_return;
-            };
+				std::this_thread::sleep_for( std::chrono::milliseconds( rand() % 20 ) );
+				std::cout << "\t executing inner coroutine: " << std::dec << i << ":" << j++ << " on thread: " << std::hex << std::this_thread::get_id() << std::endl;
+				co_return;
+			};
 
 			for ( int j = 0; j != 40; j++ ) {
 				inner_task_list.add_task( inner_coro_generator( i, j * 10 ) );
@@ -71,7 +71,7 @@ int main() {
 
 			sched->wait_for_task_list( inner_task_list );
 
-			co_await scheduled_task();
+			co_await schedule_task();
 			// this yields control back to the await_suspend method, and to our scheduler
 
 			std::cout << "executing first level coroutine: " << std::dec << i++ << " on thread: " << std::hex << std::this_thread::get_id() << std::endl;

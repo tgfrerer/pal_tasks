@@ -8,7 +8,7 @@ struct task : std::coroutine_handle<promise> {
 	using promise_type = ::promise;
 };
 
-struct scheduled_task {
+struct schedule_task {
 	// if await_ready is false, then await_suspend will be called
 	bool await_ready() noexcept { return false; };
 	void await_suspend( std::coroutine_handle<::promise> h ) noexcept;
@@ -73,7 +73,7 @@ class task_list_t {
 
 struct promise {
 	task            get_return_object() { return { task::from_promise( *this ) }; }
-	scheduled_task  initial_suspend() noexcept { return {}; }
+	schedule_task   initial_suspend() noexcept { return {}; }
 	finalize_task   final_suspend() noexcept { return {}; }
 	void            return_void(){};
 	void            unhandled_exception(){};
