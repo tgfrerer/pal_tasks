@@ -25,11 +25,12 @@ struct channel {
 
 		// --------| invariant: current channel is available now
 
-		// if there is a thread blocked on this operation, we
+		handle = h.address();
+
+		// If there is a thread blocked on this operation, we
 		// unblock it here.
 		flag.notify_one();
 
-		handle = h.address();
 		return true;
 	}
 
