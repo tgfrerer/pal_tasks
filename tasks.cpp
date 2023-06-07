@@ -28,13 +28,6 @@ struct channel {
 		handle = h.address();
 		return true;
 	}
-	bool try_pop( coroutine_handle_t& h ) {
-		if ( this->handle ) {
-			h = coroutine_handle_t::from_address( this->handle );
-			return true;
-		}
-		return false; // we were only successful if we retrieved an actual coroutine
-	}
 
 	~channel() {
 		// we must cleanup any leftover tasks.
@@ -190,9 +183,9 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 			    // thread worker implementation
 			    //
 			    while ( !stop_token.stop_requested() ) {
-				    // spinlock
-				    coroutine_handle_t task;
-				    if ( ch->try_pop( task ) ) {
+
+				    if ( ch->handle ) {
+					    coroutine_handle_t task = coroutine_handle_t::from_address( ch->handle );
 					    task(); // execute task
 					    ch->handle = nullptr;
 					    ch->flag.clear( std::memory_order_release );
