@@ -25,6 +25,10 @@ struct channel {
 
 		// --------| invariant: current channel is available now
 
+		// if there is a thread blocked on this operation, we
+		// unblock it here.
+		flag.notify_one();
+
 		handle = h.address();
 		return true;
 	}
@@ -88,6 +92,8 @@ class task_list_o {
 		return num_tasks;
 	}
 
+	std::atomic_flag block_flag = { false }; // flag used to signal that dependent tasks have completed
+
 	// Add a new task to the task list - only allowed in setup phase,
 	// where only one thread has access to the task list.
 	void add_task( coroutine_handle_t& c ) {
@@ -107,6 +113,8 @@ class task_list_o {
 
 	void decrement_task_count() {
 		num_tasks--;
+		block_flag.clear();
+		block_flag.notify_one(); // unblock us on block flag.
 	}
 };
 
@@ -141,11 +149,15 @@ class scheduler_impl {
 
 	~scheduler_impl() {
 		// deletes whether last_list is nullptr or not.
-
 		// we must wait until all the threads have been joined.
-
 		// tell all threads to join
 		// deleting a jthread object implicitly stops and joins
+		for ( auto* c : channels ) {
+			if ( c ) {
+				c->flag.test_and_set(); // set to true so that notify works reliably
+				c->flag.notify_all();
+			}
+		}
 		threads.clear();
 	}
 
@@ -189,11 +201,14 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 					    coroutine_handle_t task = coroutine_handle_t::from_address( ch->handle );
 					    task(); // execute task
 					    ch->handle = nullptr;
+					    // signal that we are ready to receive new tasks
 					    ch->flag.clear( std::memory_order_release );
 					    continue;
 				    }
 
-				    std::this_thread::sleep_for( 100ns );
+				    // wait for flag to become true - this means that a new job has been queued up
+				    ch->flag.wait( false, std::memory_order_acquire );
+				    // std::cout << "flag unblocked" << std::endl;
 			    }
 
 			    // Channel is owned by the thread - when the thread falls out of scope
@@ -229,7 +244,15 @@ void scheduler_impl::wait_for_task_list( task_list_t& p_t ) {
 		if ( c == nullptr ) {
 			// This thread is starved of work -- we must wait for the worker threads to finish up...
 			// std::cout << "WARNING: Waiting on task list completion" << std::endl;
-			std::this_thread::sleep_for( std::chrono::nanoseconds( 10 ) );
+			if ( p_t.p_impl->block_flag.test_and_set() ) {
+				// if we can acquire a block flag, we will wait on the main thread until the first
+				// worker completes
+				if ( p_t.p_impl->get_tasks_count() ) {
+					// std::cout << "blocking main thread." << std::endl;
+					p_t.p_impl->block_flag.wait( true );
+				}
+				// std::cout << "main thread unblocked" << std::endl;
+			}
 			continue;
 		}
 
