@@ -7,13 +7,22 @@
 int main() {
 	// we would like a syntax that goes:
 
-	scheduler_o* scheduler = scheduler_o::create( -1 ); // create a scheduler with two hardware worker threads
+	scheduler_o* scheduler = scheduler_o::create( 0 ); // create a scheduler with two hardware worker threads
+
+	if ( false ) {
+		task_list_t tasks{};
+
+		tasks.add_task( []() -> task {
+			co_return;
+		}() );
+	}
+	// scheduler->wait_for_task_list( tasks );
 
 	srand( 0xdeadbeef );
 
 	std::cout << "MAIN thread is: " << std::hex << std::this_thread::get_id() << std::endl;
 
-	if ( false ) {
+	if ( true ) {
 
 		task_list_t task_list{};
 		auto        coro_generator = []( int i ) -> task {
@@ -21,11 +30,12 @@ int main() {
                       << std::flush;
 
             std::this_thread::sleep_for( std::chrono::milliseconds( rand() % 20 ) );
-			// this yields control5 back to the await_suspend method, and to our scheduler
-			co_await schedule_task();
 
-			std::this_thread::sleep_for( std::chrono::milliseconds( rand() % 20 ) );
-			std::cout << "executing coroutine: " << std::dec << i++ << " on thread: " << std::hex << std::this_thread::get_id() << std::endl;
+            // this yields control back to the await_suspend method, and to our scheduler
+            co_await schedule_task();
+
+            std::this_thread::sleep_for( std::chrono::milliseconds( rand() % 20 ) );
+            std::cout << "executing coroutine: " << std::dec << i++ << " on thread: " << std::hex << std::this_thread::get_id() << std::endl;
             co_return;
 		};
 
@@ -54,9 +64,9 @@ int main() {
 
 			auto inner_coro_generator = []( int i, int j ) -> task {
 				std::cout << "\t executing inner coroutine: " << std::dec << i << ":" << j++ << " on thread: " << std::hex << std::this_thread::get_id() << std::endl
-                          << std::flush;
+				          << std::flush;
 
-                std::this_thread::sleep_for( std::chrono::milliseconds( rand() % 10 ) );
+				std::this_thread::sleep_for( std::chrono::milliseconds( rand() % 10 ) );
 				// this yields control back to the await_suspend method, and to our scheduler
 				co_await schedule_task();
 
@@ -92,6 +102,7 @@ int main() {
 
 	std::cout << "Back with main program." << std::endl
 	          << std::flush;
+
 	delete scheduler;
 
 	return 0;
