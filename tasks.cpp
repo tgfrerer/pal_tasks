@@ -114,9 +114,11 @@ class task_list_o {
 	}
 
 	void decrement_task_count() {
-		num_tasks--;
-		block_flag.clear();
-		block_flag.notify_one(); // unblock us on block flag.
+		size_t num_flags = --num_tasks;
+		if ( num_flags == 0 ) {
+			block_flag.clear();
+			block_flag.notify_one(); // unblock us on block flag.
+		}
 	}
 };
 
