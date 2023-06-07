@@ -207,10 +207,12 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 					    continue;
 				    }
 
-				    // Wait for flag to be set - which means that a new job has been placed in the channel
-				    // or that the current tasklist has completed.
+				    // Wait for flag to be set
+				    //
+				    // The flag is set on any of the following:
+				    //   * A new job has been placed in the channel
+				    // 	 * The current task list is empty.
 				    ch->flag.wait( false, std::memory_order_acquire );
-				    // std::cout << "flag unblocked" << std::endl;
 			    }
 
 			    // Channel is owned by the thread - when the thread falls out of scope
