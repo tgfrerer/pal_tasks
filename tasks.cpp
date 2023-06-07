@@ -246,10 +246,8 @@ void scheduler_impl::wait_for_task_list( task_list_t& p_t ) {
 			if ( p_t.p_impl->block_flag.test_and_set() ) {
 				// if we can acquire a block flag, we will wait on the main thread until the first
 				// worker completes
-				if ( p_t.p_impl->get_tasks_count() ) {
 					// std::cout << "blocking main thread." << std::endl;
 					p_t.p_impl->block_flag.wait( true );
-				}
 				// std::cout << "main thread unblocked" << std::endl;
 			}
 			continue;
