@@ -53,6 +53,8 @@ class task_list_o {
 	std::atomic_size_t     num_tasks; // number of tasks, only gets decremented if taks has been removed
 
   public:
+	std::atomic_flag block_flag = { false }; // flag used to signal that dependent tasks have completed
+
 	task_list_o( uint32_t capacity_hint = 32 ) // start with capacity of 32
 	    : tasks( capacity_hint )
 	    , num_tasks( 0 ) {
@@ -92,7 +94,6 @@ class task_list_o {
 		return num_tasks;
 	}
 
-	std::atomic_flag block_flag = { false }; // flag used to signal that dependent tasks have completed
 
 	// Add a new task to the task list - only allowed in setup phase,
 	// where only one thread has access to the task list.
