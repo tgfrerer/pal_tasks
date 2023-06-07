@@ -19,7 +19,7 @@ struct channel {
 
 		if ( flag.test_and_set( std::memory_order_acquire ) ) {
 			// if the current channel was already flagged
-			// add anymore work.
+			// we cannot add anymore work.
 			return false;
 		}
 
@@ -186,9 +186,8 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 		threads.emplace_back(
 		    []( std::stop_token stop_token, channel* ch ) {
 			    using namespace std::literals::chrono_literals;
-			    // thread worker implementation:
-			    //
-			    // TODO: block on channel read
+
+			    // thread worker implementation
 			    //
 			    while ( !stop_token.stop_requested() ) {
 				    // spinlock
@@ -203,7 +202,8 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 				    std::this_thread::sleep_for( 100ns );
 			    }
 
-			    // channel is owned by the thread - when the thread falls out of scope that means that the channel gets deleted
+			    // Channel is owned by the thread - when the thread falls out of scope
+			    // that means that the channel gets deleted, too.
 			    delete ch;
 		    },
 		    channels.back() );
