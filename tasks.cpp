@@ -270,11 +270,8 @@ void scheduler_impl::wait_for_task_list( task_list_t& p_t ) {
 
 		// --------| Invariant: All worker threads are busy - we must execute on this thread
 
-		if ( c != nullptr && !c.done() ) {
-			c();
-		} else {
-			assert( false && "task must not be done" );
-		}
+		assert( c );
+		c();
 	}
 
 	// Once all tasks have been complete, release task list
