@@ -319,7 +319,7 @@ scheduler_o::~scheduler_o() {
 
 // ----------------------------------------------------------------------
 
-void schedule_task::await_suspend( std::coroutine_handle<promise> h ) noexcept {
+void defer_task::await_suspend( std::coroutine_handle<promise> h ) noexcept {
 	// ----------| Invariant: At this point the coroutine pointed
 	// to by h has been fully suspended. This is guaranteed by the Standard.
 
@@ -328,7 +328,6 @@ void schedule_task::await_suspend( std::coroutine_handle<promise> h ) noexcept {
 	// If not, we have not been placed onto the scheduler,
 	// and we should not start execution yet.
 	if ( h.promise().scheduler ) {
-		auto& scheduler = h.promise().scheduler;
 		auto& task_list = h.promise().p_task_list;
 		// put the current coroutine to the back of the scheduler queue
 		// as it has been fully suspended at this point.
@@ -362,8 +361,8 @@ void finalize_task::await_suspend( std::coroutine_handle<promise> h ) noexcept {
 	// This is the last time that this coroutine will be awakened
 	// we do not suspend it anymore after this
 	h.promise().p_task_list->decrement_task_count();
-	std::cout << "Final suspend for coroutine." << std::endl
-	          << std::flush;
+	//	std::cout << "Final suspend for coroutine." << std::endl
+	//	          << std::flush;
 
 	h.destroy(); // are we allowed to destroy here?
 }

@@ -8,7 +8,7 @@ struct task : std::coroutine_handle<promise> {
 	using promise_type = ::promise;
 };
 
-struct schedule_task {
+struct defer_task {
 	// if await_ready is false, then await_suspend will be called
 	bool await_ready() noexcept { return false; };
 	void await_suspend( std::coroutine_handle<::promise> h ) noexcept;
@@ -38,9 +38,6 @@ class scheduler_o {
 	scheduler_o& operator=( scheduler_o&& )      = delete; // move assignment
 
   public:
-	// create a new task list object
-	task_list_t new_task_list();
-
 	// add coroutines to a task list object
 
 	// execute all tasks in the task list, then free the task list object
@@ -73,7 +70,9 @@ class task_list_t {
 
 struct promise {
 	task            get_return_object() { return { task::from_promise( *this ) }; }
-	schedule_task   initial_suspend() noexcept { return {}; }
+	defer_task      initial_suspend() noexcept {
+        return {};
+	}
 	finalize_task   final_suspend() noexcept { return {}; }
 	void            return_void(){};
 	void            unhandled_exception(){};
