@@ -333,24 +333,20 @@ void schedule_task::await_suspend( std::coroutine_handle<promise> h ) noexcept {
 
 		task_list->push_task( h.promise().get_return_object() );
 
-		// enables or disables eager work-stealing
-		if ( true ) {
+		// take next task from front of scheduler queue -
+		// we can do this so that multiple threads can share the
+		// scheduling workload potentially.
+		//
+		// but we can also disable that, so that there is only one thread
+		// that does the scheduling, and that removes elements from the
+		// queue.
 
-			// take next task from front of scheduler queue -
-			// we can do this so that multiple threads can share the
-			// scheduling workload potentially.
-			//
-			// but we can also disable that, so that there is only one thread
-			// that does the scheduling, and that removes elements from the
-			// queue.
+		coroutine_handle_t c = task_list->pop_task();
 
-			coroutine_handle_t c = task_list->pop_task();
-
-			if ( c && !c.done() ) {
-				c();
-			} else {
-				assert( false && "task must not be done" );
-			}
+		if ( c && !c.done() ) {
+			c();
+		} else {
+			assert( false && "task must not be done" );
 		}
 	}
 
