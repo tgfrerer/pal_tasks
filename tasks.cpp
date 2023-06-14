@@ -7,10 +7,9 @@
 #include <vector>
 #include "lockfree_ring_buffer.h"
 
-using coroutine_handle_t = std::coroutine_handle<promise>;
+using coroutine_handle_t = std::coroutine_handle<TaskPromise>;
 
-
-struct channel {
+struct Channel {
 	// add channel where we can block until there is something to read
 	void*                  handle;
 	std::atomic_flag       flag{ false }; // signal that the current thread is busy.
@@ -34,13 +33,13 @@ struct channel {
 		return true;
 	}
 
-	~channel() {
+	~Channel() {
 		// we must cleanup any leftover tasks.
 
 		if ( this->handle ) {
 			std::cout << "WARNING: leftover task in channel." << std::endl;
 			std::cout << "destroying task: " << this->handle << std::endl;
-			task::from_address( this->handle ).destroy();
+			Task::from_address( this->handle ).destroy();
 		}
 
 		this->handle = nullptr;
@@ -67,7 +66,7 @@ class task_list_o {
 		void* task;
 		while ( ( task = this->tasks.try_pop() ) ) {
 			// std::cout << "Destroying task: " << task << std::endl;
-			task::from_address( task ).destroy();
+			Task::from_address( task ).destroy();
 		}
 	}
 
@@ -82,7 +81,7 @@ class task_list_o {
 	// an empty coroutine handle will compare true to nullptr
 	inline coroutine_handle_t pop_task() {
 		// invariant: tasks is not empty
-		return task::from_address( tasks.try_pop() );
+		return Task::from_address( tasks.try_pop() );
 	}
 
 	// Return the number of tasks which are both in flight and waiting
@@ -122,16 +121,16 @@ class task_list_o {
 	}
 };
 
-task_list_t::task_list_t( uint32_t hint_capacity )
+TaskList::TaskList( uint32_t hint_capacity )
     : p_impl( new task_list_o( hint_capacity ) ) {
 }
 
-void task_list_t::add_task( task c ) {
+void TaskList::add_task( Task c ) {
 	assert( p_impl != nullptr && "task list must be valid. Was this task list already used?" );
 	p_impl->add_task( c );
 }
 
-task_list_t::~task_list_t() {
+TaskList::~TaskList() {
 	// In case that this task list was deleted already, p_impl will
 	// be nullptr, which means that this delete operator is a no-op.
 	// otherwise (in case a tasklist has not been used and needs to
@@ -146,7 +145,7 @@ class scheduler_impl {
 	bool move_task_to_worker_thread( coroutine_handle_t& c );
 
   public:
-	std::vector<channel*>     channels; // non-owning - channels are owned by their threads
+	std::vector<Channel*>     channels; // non-owning - channels are owned by their threads
 	std::vector<std::jthread> threads;
 
 	scheduler_impl( int32_t num_worker_threads = 0 );
@@ -168,7 +167,7 @@ class scheduler_impl {
 	}
 
 	// Execute all tasks in the task list, then invalidate the task list object
-	void wait_for_task_list( task_list_t& p_t );
+	void wait_for_task_list( TaskList& p_t );
 };
 
 scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
@@ -191,12 +190,12 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 	// NOTE THAT BY DEFAULT WE DON'T HAVE ANY WORKER THREADS
 	//
 	for ( int i = 0; i != num_worker_threads; i++ ) {
-		channels.emplace_back( new channel() );
+		channels.emplace_back( new Channel() );
 		threads.emplace_back(
 		    //
 		    // Thread worker implementation
 		    //
-		    []( std::stop_token stop_token, channel* ch ) {
+		    []( std::stop_token stop_token, Channel* ch ) {
 			    while ( !stop_token.stop_requested() ) {
 
 				    if ( ch->handle ) {
@@ -223,7 +222,7 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 	}
 }
 
-void scheduler_impl::wait_for_task_list( task_list_t& p_t ) {
+void scheduler_impl::wait_for_task_list( TaskList& p_t ) {
 
 	if ( p_t.p_impl == nullptr ) {
 		assert( false && "Task list must have been initialised. Has this task list been waited for already?" );
@@ -301,25 +300,25 @@ inline bool scheduler_impl::move_task_to_worker_thread( coroutine_handle_t& c ) 
 
 // ----------------------------------------------------------------------
 
-scheduler_o::scheduler_o( int32_t num_worker_threads )
+Scheduler::Scheduler( int32_t num_worker_threads )
     : p_impl( new scheduler_impl( num_worker_threads ) ) {
 }
 
-void scheduler_o::wait_for_task_list( task_list_t& p_t ) {
+void Scheduler::wait_for_task_list( TaskList& p_t ) {
 	p_impl->wait_for_task_list( p_t );
 }
 
-scheduler_o* scheduler_o::create( int32_t num_worker_threads ) {
-	return new scheduler_o( num_worker_threads );
+Scheduler* Scheduler::create( int32_t num_worker_threads ) {
+	return new Scheduler( num_worker_threads );
 }
 
-scheduler_o::~scheduler_o() {
+Scheduler::~Scheduler() {
 	delete p_impl;
 }
 
 // ----------------------------------------------------------------------
 
-void defer_task::await_suspend( std::coroutine_handle<promise> h ) noexcept {
+void defer_task::await_suspend( std::coroutine_handle<TaskPromise> h ) noexcept {
 	// ----------| Invariant: At this point the coroutine pointed
 	// to by h has been fully suspended. This is guaranteed by the Standard.
 
@@ -357,7 +356,7 @@ void defer_task::await_suspend( std::coroutine_handle<promise> h ) noexcept {
 
 // ----------------------------------------------------------------------
 
-void finalize_task::await_suspend( std::coroutine_handle<promise> h ) noexcept {
+void finalize_task::await_suspend( std::coroutine_handle<TaskPromise> h ) noexcept {
 	// This is the last time that this coroutine will be awakened
 	// we do not suspend it anymore after this
 	h.promise().p_task_list->decrement_task_count();

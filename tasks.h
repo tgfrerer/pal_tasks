@@ -2,74 +2,76 @@
 #include <coroutine>
 #include <stdint.h>
 
-struct promise; // ffdecl.
+struct TaskPromise; // ffdecl.
 
-struct task : std::coroutine_handle<promise> {
-	using promise_type = ::promise;
+struct Task : std::coroutine_handle<TaskPromise> {
+	using promise_type = ::TaskPromise;
 };
 
 struct defer_task {
 	// if await_ready is false, then await_suspend will be called
 	bool await_ready() noexcept { return false; };
-	void await_suspend( std::coroutine_handle<::promise> h ) noexcept;
+	void await_suspend( std::coroutine_handle<::TaskPromise> h ) noexcept;
 	void await_resume() noexcept {};
 };
 
 struct finalize_task {
 	// if await_ready is false, then await_suspend will be called
 	bool await_ready() noexcept { return false; };
-	void await_suspend( std::coroutine_handle<::promise> h ) noexcept;
+	void await_suspend( std::coroutine_handle<::TaskPromise> h ) noexcept;
 	void await_resume() noexcept {};
 };
 
 
 class scheduler_impl;              // ffdecl, pimpl
 struct task_list_o;                // ffdecl
-class task_list_t;                 // ffdecl
+class TaskList;                    // ffdecl
 
-class scheduler_o {
+class Scheduler {
 	scheduler_impl* p_impl = nullptr;
 
-	scheduler_o( int32_t num_worker_threads );
+	Scheduler( int32_t num_worker_threads );
 
-	scheduler_o( const scheduler_o& )            = delete;
-	scheduler_o( scheduler_o&& )                 = delete; // move constructor
-	scheduler_o& operator=( const scheduler_o& ) = delete;
-	scheduler_o& operator=( scheduler_o&& )      = delete; // move assignment
+	Scheduler( const Scheduler& )            = delete;
+	Scheduler( Scheduler&& )                 = delete; // move constructor
+	Scheduler& operator=( const Scheduler& ) = delete;
+	Scheduler& operator=( Scheduler&& )      = delete; // move assignment
 
   public:
 	// add coroutines to a task list object
 
 	// execute all tasks in the task list, then free the task list object
 	// this takes possession of the task list object.
-	void wait_for_task_list( task_list_t& p_t );
+	void wait_for_task_list( TaskList& p_t );
 
-	static scheduler_o* create( int32_t num_worker_threads = 0 );
+	static Scheduler* create( int32_t num_worker_threads = 0 );
 
-	~scheduler_o();
+	~Scheduler();
 };
 
-class task_list_t {
+class TaskList {
 
 	task_list_o* p_impl; // owning
 
-	task_list_t( const task_list_t& )            = delete;
-	task_list_t( task_list_t&& )                 = delete; // move constructor
-	task_list_t& operator=( const task_list_t& ) = delete;
-	task_list_t& operator=( task_list_t&& )      = delete; // move assignment
+	TaskList( const TaskList& )            = delete;
+	TaskList( TaskList&& )                 = delete; // move constructor
+	TaskList& operator=( const TaskList& ) = delete;
+	TaskList& operator=( TaskList&& )      = delete; // move assignment
 
   public:
-	task_list_t( uint32_t hint_capacity = 1 ); // default constructor
+	TaskList( uint32_t hint_capacity = 1 ); // default constructor
 
-	~task_list_t();
+	~TaskList();
 
-	void add_task( task c );
+	void add_task( Task c );
 
 	friend class scheduler_impl;
 };
 
-struct promise {
-	task            get_return_object() { return { task::from_promise( *this ) }; }
+struct TaskPromise {
+	Task get_return_object() {
+		return { Task::from_promise( *this ) };
+	}
 	defer_task      initial_suspend() noexcept {
         return {};
 	}
