@@ -12,7 +12,7 @@ using coroutine_handle_t = std::coroutine_handle<TaskPromise>;
 struct Channel {
 	// add channel where we can block until there is something to read
 	void*                  handle;
-	std::atomic_flag       flag{ false }; // signal that the current thread is busy.
+	std::atomic_flag       flag; // signal that the current thread is busy.
 
 	bool try_push( coroutine_handle_t& h ) {
 
@@ -53,7 +53,7 @@ class task_list_o {
 	std::atomic_size_t     num_tasks; // number of tasks, only gets decremented if taks has been removed
 
   public:
-	std::atomic_flag block_flag = { false }; // flag used to signal that dependent tasks have completed
+	std::atomic_flag block_flag ; // flag used to signal that dependent tasks have completed
 
 	task_list_o( uint32_t capacity_hint = 32 ) // start with capacity of 32
 	    : tasks( capacity_hint )

@@ -23,9 +23,9 @@ struct finalize_task {
 };
 
 
-class scheduler_impl;              // ffdecl, pimpl
-struct task_list_o;                // ffdecl
-class TaskList;                    // ffdecl
+class scheduler_impl;             // ffdecl, pimpl
+class task_list_o;                // ffdecl
+class TaskList;                   // ffdecl
 
 class Scheduler {
 	scheduler_impl* p_impl = nullptr;
