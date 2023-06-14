@@ -1,0 +1,1 @@
+This is the source code for the coroutines-based task system discussed in http://poniesandlight.co.uk/reflect/coroutines_job_system/
