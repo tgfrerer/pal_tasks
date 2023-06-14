@@ -38,12 +38,18 @@ class Scheduler {
 	Scheduler& operator=( Scheduler&& )      = delete; // move assignment
 
   public:
-	// add coroutines to a task list object
-
-	// execute all tasks in the task list, then free the task list object
-	// this takes possession of the task list object.
+	// Execute all tasks in the task list, then free the task list object
+	// this takes possession of the task list object, and acts as if it was
+	// a blocking call.
+	//
+	// Once this call returns, the TaskList that was given as a parameter
+	// has been consumed, and you should not re-use it.
 	void wait_for_task_list( TaskList& p_t );
 
+	// Create a scheduler with as many hardware threads as possible
+	//  0 ... No worker threads, just one main thread
+	//  n ... n number of worker threads
+	// -1 ... As many worker threads as cpus, -1
 	static Scheduler* create( int32_t num_worker_threads = 0 );
 
 	~Scheduler();
