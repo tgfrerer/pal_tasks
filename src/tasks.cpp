@@ -240,11 +240,16 @@ void scheduler_impl::wait_for_task_list( TaskList& p_t ) {
 
 	// Distribute work, as long as there is work to distribute
 	while ( p_t.p_impl->get_tasks_count() ) {
+
+		// ----------| Invariant: Work on all tasks of this task list has not yet completed
+
 		coroutine_handle_t c = ( p_t.p_impl )->pop_task();
 
 		if ( c == nullptr ) {
-			// This thread is starved of work -- we must wait for the worker threads to complete
-			// before we can progress further.
+
+			// We could not fetch a task from the task list - this means 
+			// that there are tasks in-progress that we must wait for.
+
 			if ( p_t.p_impl->block_flag.test_and_set() ) {
 				std::cout << "blocking thread " << std::this_thread::get_id() << " on [" << p_t.p_impl << "]" << std::endl;
 				// Wait for the flag to be set - this is the case if any of these happen:
@@ -274,7 +279,7 @@ void scheduler_impl::wait_for_task_list( TaskList& p_t ) {
 			continue;
 		}
 
-		// --------| Invariant: All worker threads are busy - we must execute on this thread
+		// --------| Invariant: All worker threads are busy - or there are no worker threads: we must execute on this thread
 
 		assert( c );
 		c();
