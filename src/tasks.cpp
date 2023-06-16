@@ -22,7 +22,7 @@ struct Channel {
 
 	bool try_push( coroutine_handle_t& h ) {
 
-		if ( flag.test_and_set( std::memory_order_acquire ) ) {
+		if ( flag.test_and_set() ) {
 			// if the current channel was already flagged
 			// we cannot add anymore work.
 			return false;
@@ -118,7 +118,7 @@ class task_list_o {
 	void decrement_task_count() {
 		size_t num_flags = --num_tasks;
 		if ( num_flags == 0 ) {
-			block_flag.clear();
+			block_flag.clear(std::memory_order_release);
 			block_flag.notify_one(); // unblock us on block flag.
 		}
 	}
@@ -183,7 +183,7 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 
 	assert( num_worker_threads >= 0 && "Inferred number of worker threads must not be negative" );
 
-	std::cout << "Initializing scheduler with " << num_worker_threads << " worker threads" << std::endl;
+	// std::cout << "Initializing scheduler with " << num_worker_threads << " worker threads" << std::endl;
 
 	// Reserve memory so that we can take addresses for channel,
 	// and don't have to worry about iterator validity
@@ -205,7 +205,7 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 					    coroutine_handle_t::from_address( ch->handle ).resume(); // resume coroutine
 					    ch->handle = nullptr;
 					    // signal that we are ready to receive new tasks
-					    ch->flag.clear( std::memory_order_release );
+					    ch->flag.clear(std::memory_order::release  );
 					    continue;
 				    }
 
@@ -214,7 +214,7 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 				    // The flag is set on any of the following:
 				    //   * A new job has been placed in the channel
 				    // 	 * The current task list is empty.
-				    ch->flag.wait( false, std::memory_order_acquire );
+				    ch->flag.wait( false, std::memory_order::acquire );
 			    }
 
 			    // Channel is owned by the thread - when the thread falls out of scope
@@ -254,15 +254,15 @@ void scheduler_impl::wait_for_task_list( TaskList& p_t ) {
 			// We could not fetch a task from the task list - this means 
 			// that there are tasks in-progress that we must wait for.
 
-			if ( p_t.p_impl->block_flag.test_and_set() ) {
-				std::cout << "blocking thread " << std::this_thread::get_id() << " on [" << p_t.p_impl << "]" << std::endl;
+			if ( p_t.p_impl->block_flag.test_and_set(std::memory_order::acq_rel)) {
+				 std::cout << "blocking thread " << std::this_thread::get_id() << " on [" << p_t.p_impl << "]" << std::endl;
 				// Wait for the flag to be set - this is the case if any of these happen:
 				//    * the scheduler is destroyed
 				//    * the last task of the task list has completed, and the task list is now empty.
-				p_t.p_impl->block_flag.wait( true );
-				std::cout << "resuming thread " << std::this_thread::get_id() << " on [" << p_t.p_impl << "]" << std::endl;
+				p_t.p_impl->block_flag.wait(true, std::memory_order::acquire );
+				 std::cout << "resuming thread " << std::this_thread::get_id() << " on [" << p_t.p_impl << "]" << std::endl;
 			} else {
-				std::cout << "spinning thread " << std::this_thread::get_id() << " on [" << p_t.p_impl << "]" << std::endl;
+				 std::cout << "spinning thread " << std::this_thread::get_id() << " on [" << p_t.p_impl << "]" << std::endl;
 			}
 
 			continue;
@@ -332,40 +332,52 @@ void defer_task::await_suspend( std::coroutine_handle<TaskPromise> h ) noexcept 
 	// ----------| Invariant: At this point the coroutine pointed to by h 
 	// has been fully suspended. This is guaranteed by the c++ standard.
 
+	auto& promise = h.promise();
+
 	// Check if we have a scheduler available via the promise.
 	//
 	// If not, this means we have not been placed onto the scheduler,
 	// and we should not start execution yet.
-	if ( h.promise().scheduler ) {
+	if ( promise.scheduler ) {
 
 		// If there is a scheduler available, this means that the current
 		// coroutine has been suspended mid-way.
 
-		auto& task_list = h.promise().p_task_list;
+		auto& task_list = promise.p_task_list;
 
 		// Put the current coroutine to the back of the scheduler queue
 		// as it has been fully suspended at this point.
 
-		task_list->push_task( h.promise().get_return_object() );
+		task_list->push_task( promise.get_return_object() );
 
-		// --- Eager Workers --- 
-		// 
-		// Eagerly try to fetch & execute the next task from the front of the 
-		// scheduler queue -
-		// We do this so that multiple threads can share the
-		// scheduling workload.
-		//
-		// But we can also disable that, so that there is only one thread
-		// that does the scheduling, and removing elements from the
-		// queue.
-
-		coroutine_handle_t c = task_list->pop_task();
-
-		if ( c && !c.done() ) {
-			c();
-		} else {
-			assert( false && "task must not be done" );
+		{
+			// We must unblock/awake the scheduling thread each time we suspend 
+			// a coroutine so that the scheduling worker may pick up work again,  
+			// in case it had been put to sleep earlier.
+			promise.p_task_list->block_flag.clear( std::memory_order_release );
+			promise.p_task_list->block_flag.notify_one(); // wake up worker just in case
 		}
+
+		{ 
+			// --- Eager Workers ---
+			//
+			// Eagerly try to fetch & execute the next task from the front of the
+			// scheduler queue -
+			// We do this so that multiple threads can share the
+			// scheduling workload.
+			//
+			// But we can also disable that, so that there is only one thread
+			// that does the scheduling, and removing elements from the
+			// queue.
+
+			coroutine_handle_t c = task_list->pop_task();
+
+			if ( c ) {
+				 assert( !c.done() && "task must not be done" );
+				 c();
+			}
+		}
+
 	}
 
 	// Note: Once we drop off here, controy will return to where the resume() 
