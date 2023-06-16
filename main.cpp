@@ -18,9 +18,9 @@ int main() {
             std::cout << "doing some work: " << i++ << std::endl;
 
             // put this coroutine back on the scheduler
-            co_await defer_task();
+			co_await suspend_task();
 
-            // we have resumed this coroutine from the scheduler
+			// we have resumed this coroutine from the scheduler
             std::cout << "resuming work: " << i++ << std::endl;
 
             // complete work, signal to the compiler that this is a
@@ -67,9 +67,9 @@ int main() {
 
                 std::this_thread::sleep_for( std::chrono::microseconds( rand() % 40000 ) );
                 // this yields control back to the await_suspend method, and to our scheduler
-                co_await defer_task();
+				co_await suspend_task();
 
-                std::this_thread::sleep_for( std::chrono::microseconds( rand() % 33000 ) );
+				std::this_thread::sleep_for( std::chrono::microseconds( rand() % 33000 ) );
                 std::cout << "\t executing inner coroutine: " << std::dec << i << ":" << j++ << " on thread: " << std::hex << std::this_thread::get_id() << std::endl;
                 co_return;
             };
@@ -82,8 +82,8 @@ int main() {
 
             std::this_thread::sleep_for( std::chrono::nanoseconds( rand() % 40000000 ) );
 
-            co_await defer_task();
-            // this yields control back to the await_suspend method, and to our scheduler
+			co_await suspend_task();
+			// this yields control back to the await_suspend method, and to our scheduler
 
             std::cout << "executing first level coroutine: " << std::dec << i++ << " on thread: " << std::hex << std::this_thread::get_id() << std::endl;
             sched->wait_for_task_list( inner_task_list );

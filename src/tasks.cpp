@@ -325,7 +325,7 @@ Scheduler::~Scheduler() {
 
 // ----------------------------------------------------------------------
 
-void defer_task::await_suspend( std::coroutine_handle<TaskPromise> h ) noexcept {
+void suspend_task::await_suspend( std::coroutine_handle<TaskPromise> h ) noexcept {
 
 	// ----------| Invariant: At this point the coroutine pointed to by h
 	// has been fully suspended. This is guaranteed by the c++ standard.

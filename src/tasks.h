@@ -8,7 +8,7 @@ struct Task : std::coroutine_handle<TaskPromise> {
 	using promise_type = ::TaskPromise;
 };
 
-struct defer_task {
+struct suspend_task {
 	// if await_ready is false, then await_suspend will be called
 	bool await_ready() noexcept { return false; };
 	void await_suspend( std::coroutine_handle<::TaskPromise> h ) noexcept;
@@ -78,8 +78,8 @@ struct TaskPromise {
 	Task get_return_object() {
 		return { Task::from_promise( *this ) };
 	}
-	defer_task      initial_suspend() noexcept {
-        return {};
+	suspend_task initial_suspend() noexcept {
+		return {};
 	}
 	finalize_task   final_suspend() noexcept { return {}; }
 	void            return_void(){};
