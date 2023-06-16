@@ -10,7 +10,8 @@ int main() {
 	//  0 ... No worker threads, just one main thread
 	//  n ... n number of worker threads
 	// -1 ... As many worker threads as cpus, -1
-	Scheduler* scheduler = Scheduler::create( 0 );
+	Scheduler* scheduler = Scheduler::create( -1 );
+
 	if ( false ) {
 
 		TaskList tasks{};
@@ -28,7 +29,7 @@ int main() {
             co_return;
 		};
 
-		for ( int i = 0; i != 50; i++ ) {
+		for ( int i = 0; i != 5; i++ ) {
 			tasks.add_task( task_generator( i ) );
 		}
 
@@ -45,29 +46,6 @@ int main() {
 
 	std::cout << "MAIN thread is: " << std::hex << std::this_thread::get_id() << std::endl;
 
-	if ( false ) {
-
-		TaskList task_list{};
-		auto     coro_generator = []( int i ) -> Task {
-            std::cout << "executing coroutine: " << std::dec << i++ << " on thread: " << std::hex << std::this_thread::get_id() << std::endl
-                      << std::flush;
-
-            std::this_thread::sleep_for( std::chrono::microseconds( rand() % 20000 ) );
-
-            // this yields control back to the await_suspend method, and to our scheduler
-            co_await defer_task();
-
-            std::this_thread::sleep_for( std::chrono::milliseconds( rand() % 20 ) );
-            std::cout << "executing coroutine: " << std::dec << i++ << " on thread: " << std::hex << std::this_thread::get_id() << std::endl;
-            co_return;
-		};
-
-		for ( int i = 0; i != 100; i++ ) {
-			task_list.add_task( coro_generator( i * 100 ) );
-		}
-
-		scheduler->wait_for_task_list( task_list );
-	}
 
 	if ( true ) {
 		/*
