@@ -9,16 +9,15 @@
 
 using coroutine_handle_t = std::coroutine_handle<TaskPromise>;
 
-
-// A channel is a thread-safe primitive to communicate with worker threads - 
+// A channel is a thread-safe primitive to communicate with worker threads -
 // each worker thread has exactly one channel. We use one channel per worker
 // thread to feed coroutine handles to the worker thread. Once a channel contains
 // a payload it is blocked (you cannot push anymore handles onto this channel).
-// The channel gets free and ready to receive another handle as soon as the 
+// The channel gets free and ready to receive another handle as soon as the
 // worker thread has finished processing the current handle.
 struct Channel {
-	void*                  handle; // storage for channel payload: one single handle. void means that the channel is free.
-	std::atomic_flag       flag; // signal that the current channel is busy.
+	void*            handle; // storage for channel payload: one single handle. void means that the channel is free.
+	std::atomic_flag flag;   // signal that the current channel is busy.
 
 	bool try_push( coroutine_handle_t& h ) {
 
@@ -41,14 +40,14 @@ struct Channel {
 
 	~Channel() {
 
-		// Once the channel accepts a coroutine handle, it becomes the 
-		// owner of the handle. If there are any leftover valid handles 
+		// Once the channel accepts a coroutine handle, it becomes the
+		// owner of the handle. If there are any leftover valid handles
 		// that we own when this object dips into ovlivion, we must clean
 		// them up first.
 		//
 		if ( this->handle ) {
-			//std::cout << "WARNING: leftover task in channel." << std::endl;
-			//std::cout << "destroying task: " << this->handle << std::endl;
+			// std::cout << "WARNING: leftover task in channel." << std::endl;
+			// std::cout << "destroying task: " << this->handle << std::endl;
 			Task::from_address( this->handle ).destroy();
 		}
 
@@ -61,7 +60,7 @@ class task_list_o {
 	std::atomic_size_t     num_tasks; // number of tasks, only gets decremented if taks has been removed
 
   public:
-	std::atomic_flag block_flag ; // flag used to signal that dependent tasks have completed
+	std::atomic_flag block_flag; // flag used to signal that dependent tasks have completed
 
 	task_list_o( uint32_t capacity_hint = 32 ) // start with capacity of 32
 	    : tasks( capacity_hint )
@@ -81,8 +80,8 @@ class task_list_o {
 		tasks.push( c.address() );
 	}
 
-	// Get the next task if possible, if there is no next task, 
-	// return an empty coroutine handle. 
+	// Get the next task if possible, if there is no next task,
+	// return an empty coroutine handle.
 	// An empty coroutine handle will compare true to nullptr
 	inline coroutine_handle_t pop_task() {
 		return Task::from_address( tasks.try_pop() );
@@ -97,7 +96,6 @@ class task_list_o {
 	inline size_t get_tasks_count() {
 		return num_tasks;
 	}
-
 
 	// Add a new task to the task list - only allowed in setup phase,
 	// where only one thread has access to the task list.
@@ -118,7 +116,7 @@ class task_list_o {
 	void decrement_task_count() {
 		size_t num_flags = --num_tasks;
 		if ( num_flags == 0 ) {
-			block_flag.clear(std::memory_order_release);
+			block_flag.clear( std::memory_order_release );
 			block_flag.notify_one(); // unblock us on block flag.
 		}
 	}
@@ -205,7 +203,7 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 					    coroutine_handle_t::from_address( ch->handle ).resume(); // resume coroutine
 					    ch->handle = nullptr;
 					    // signal that we are ready to receive new tasks
-					    ch->flag.clear(std::memory_order::release  );
+					    ch->flag.clear( std::memory_order::release );
 					    continue;
 				    }
 
@@ -251,18 +249,18 @@ void scheduler_impl::wait_for_task_list( TaskList& p_t ) {
 
 		if ( c == nullptr ) {
 
-			// We could not fetch a task from the task list - this means 
+			// We could not fetch a task from the task list - this means
 			// that there are tasks in-progress that we must wait for.
 
-			if ( p_t.p_impl->block_flag.test_and_set(std::memory_order::acq_rel)) {
-				 std::cout << "blocking thread " << std::this_thread::get_id() << " on [" << p_t.p_impl << "]" << std::endl;
+			if ( p_t.p_impl->block_flag.test_and_set( std::memory_order::acq_rel ) ) {
+				std::cout << "blocking thread " << std::this_thread::get_id() << " on [" << p_t.p_impl << "]" << std::endl;
 				// Wait for the flag to be set - this is the case if any of these happen:
 				//    * the scheduler is destroyed
 				//    * the last task of the task list has completed, and the task list is now empty.
-				p_t.p_impl->block_flag.wait(true, std::memory_order::acquire );
-				 std::cout << "resuming thread " << std::this_thread::get_id() << " on [" << p_t.p_impl << "]" << std::endl;
+				p_t.p_impl->block_flag.wait( true, std::memory_order::acquire );
+				std::cout << "resuming thread " << std::this_thread::get_id() << " on [" << p_t.p_impl << "]" << std::endl;
 			} else {
-				 std::cout << "spinning thread " << std::this_thread::get_id() << " on [" << p_t.p_impl << "]" << std::endl;
+				std::cout << "spinning thread " << std::this_thread::get_id() << " on [" << p_t.p_impl << "]" << std::endl;
 			}
 
 			continue;
@@ -280,7 +278,7 @@ void scheduler_impl::wait_for_task_list( TaskList& p_t ) {
 			//
 			// If we made it in here, the handle was successfully offloaded to a worker thread.
 			//
-			// The worker thread must now execute the payload, and the task will decrement the 
+			// The worker thread must now execute the payload, and the task will decrement the
 			// counter for the current TaskList upon completion.
 			continue;
 		}
@@ -329,7 +327,7 @@ Scheduler::~Scheduler() {
 
 void defer_task::await_suspend( std::coroutine_handle<TaskPromise> h ) noexcept {
 
-	// ----------| Invariant: At this point the coroutine pointed to by h 
+	// ----------| Invariant: At this point the coroutine pointed to by h
 	// has been fully suspended. This is guaranteed by the c++ standard.
 
 	auto& promise = h.promise();
@@ -351,14 +349,14 @@ void defer_task::await_suspend( std::coroutine_handle<TaskPromise> h ) noexcept 
 		task_list->push_task( promise.get_return_object() );
 
 		{
-			// We must unblock/awake the scheduling thread each time we suspend 
-			// a coroutine so that the scheduling worker may pick up work again,  
+			// We must unblock/awake the scheduling thread each time we suspend
+			// a coroutine so that the scheduling worker may pick up work again,
 			// in case it had been put to sleep earlier.
 			promise.p_task_list->block_flag.clear( std::memory_order_release );
 			promise.p_task_list->block_flag.notify_one(); // wake up worker just in case
 		}
 
-		{ 
+		{
 			// --- Eager Workers ---
 			//
 			// Eagerly try to fetch & execute the next task from the front of the
@@ -373,14 +371,13 @@ void defer_task::await_suspend( std::coroutine_handle<TaskPromise> h ) noexcept 
 			coroutine_handle_t c = task_list->pop_task();
 
 			if ( c ) {
-				 assert( !c.done() && "task must not be done" );
-				 c();
+				assert( !c.done() && "task must not be done" );
+				c();
 			}
 		}
-
 	}
 
-	// Note: Once we drop off here, controy will return to where the resume() 
+	// Note: Once we drop off here, controy will return to where the resume()
 	// command that brought us here was issued.
 }
 
