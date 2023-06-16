@@ -9,10 +9,16 @@
 
 using coroutine_handle_t = std::coroutine_handle<TaskPromise>;
 
+
+// A channel is a thread-safe primitive to communicate with worker threads - 
+// each worker thread has exactly one channel. We use one channel per worker
+// thread to feed coroutine handles to the worker thread. Once a channel contains
+// a payload it is blocked (you cannot push anymore handles onto this channel).
+// The channel gets free and ready to receive another handle as soon as the 
+// worker thread has finished processing the current handle.
 struct Channel {
-	// add channel where we can block until there is something to read
-	void*                  handle;
-	std::atomic_flag       flag; // signal that the current thread is busy.
+	void*                  handle; // storage for channel payload: one single handle. void means that the channel is free.
+	std::atomic_flag       flag; // signal that the current channel is busy.
 
 	bool try_push( coroutine_handle_t& h ) {
 
@@ -34,17 +40,19 @@ struct Channel {
 	}
 
 	~Channel() {
-		// we must cleanup any leftover tasks.
 
+		// Once the channel accepts a coroutine handle, it becomes the 
+		// owner of the handle. If there are any leftover valid handles 
+		// that we own when this object dips into ovlivion, we must clean
+		// them up first.
+		//
 		if ( this->handle ) {
-			std::cout << "WARNING: leftover task in channel." << std::endl;
-			std::cout << "destroying task: " << this->handle << std::endl;
+			//std::cout << "WARNING: leftover task in channel." << std::endl;
+			//std::cout << "destroying task: " << this->handle << std::endl;
 			Task::from_address( this->handle ).destroy();
 		}
 
 		this->handle = nullptr;
-
-		// std::cout << "deleting channel." << std::endl;
 	}
 };
 
@@ -61,26 +69,22 @@ class task_list_o {
 	}
 
 	~task_list_o() {
-		// if there are any tasks left on the task list, we must destroy them, as we own them.
-		// std::cout << "Destroying task list" << std::endl;
+		// If there are any tasks left on the task list, we must destroy them, as we own them.
 		void* task;
 		while ( ( task = this->tasks.try_pop() ) ) {
-			// std::cout << "Destroying task: " << task << std::endl;
 			Task::from_address( task ).destroy();
 		}
 	}
 
-	// push a suspended task back onto the end of the task list
+	// Push a suspended task back onto the end of the task list
 	inline void push_task( coroutine_handle_t const& c ) {
-		// std::cout << "pushed task: " << c.address() << std::endl;
 		tasks.push( c.address() );
 	}
 
-	// Get the next task if possible,
-	// if there is no next task, return an empty coroutine handle
-	// an empty coroutine handle will compare true to nullptr
+	// Get the next task if possible, if there is no next task, 
+	// return an empty coroutine handle. 
+	// An empty coroutine handle will compare true to nullptr
 	inline coroutine_handle_t pop_task() {
-		// invariant: tasks is not empty
 		return Task::from_address( tasks.try_pop() );
 	}
 
@@ -101,7 +105,6 @@ class task_list_o {
 		c.promise().p_task_list = this;
 		tasks.unsafe_initial_dynamic_push( c.address() );
 		num_tasks++;
-		// std::cout << "added task: " << c.address() << std::endl;
 	}
 
 	void tag_all_tasks_with_scheduler( scheduler_impl* p_scheduler ) {
@@ -225,11 +228,11 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 void scheduler_impl::wait_for_task_list( TaskList& p_t ) {
 
 	if ( p_t.p_impl == nullptr ) {
-		assert( false && "Task list must have been initialised. Has this task list been waited for already?" );
+		assert( false && "Task list must have been freshly initialised. Has this task list been waited for already?" );
 		return;
 	}
 
-	// --------| Invariant: task list is valid
+	// --------| Invariant: TaskList is valid
 
 	// Execute tasks in this task list until there are no more tasks left
 	// to execute.
@@ -239,9 +242,10 @@ void scheduler_impl::wait_for_task_list( TaskList& p_t ) {
 	p_t.p_impl->tag_all_tasks_with_scheduler( this );
 
 	// Distribute work, as long as there is work to distribute
+
 	while ( p_t.p_impl->get_tasks_count() ) {
 
-		// ----------| Invariant: Work on all tasks of this task list has not yet completed
+		// ----------| Invariant: There are Tasks in this Task List which have not yet completed
 
 		coroutine_handle_t c = ( p_t.p_impl )->pop_task();
 
@@ -260,40 +264,40 @@ void scheduler_impl::wait_for_task_list( TaskList& p_t ) {
 			} else {
 				std::cout << "spinning thread " << std::this_thread::get_id() << " on [" << p_t.p_impl << "]" << std::endl;
 			}
+
 			continue;
 		}
 
-		// ----------| invariant: current coroutine is valid
+		// ----------| Invariant: current coroutine is valid
 
 		// Find a free channel. if there is, then place this handle in the channel,
 		// which means that it will be executed on the worker thread associated
 		// with this channel.
 
 		if ( move_task_to_worker_thread( c ) ) {
-			// pushing consumes the coroutine handle - that is, it becomes owned by the channel
+			// Pushing consumes the coroutine handle - that is, it becomes owned by the channel
 			// who owns it for the worker thread.
-			// handle was successfully offloaded to a worker thread.
-			// the worker thread must now execute the payload, and
-			// the task will  decrement the counter for this tasklist
-			// upon completion.
+			//
+			// If we made it in here, the handle was successfully offloaded to a worker thread.
+			//
+			// The worker thread must now execute the payload, and the task will decrement the 
+			// counter for the current TaskList upon completion.
 			continue;
 		}
 
 		// --------| Invariant: All worker threads are busy - or there are no worker threads: we must execute on this thread
-
-		assert( c );
 		c();
 	}
 
 	// Once all tasks have been complete, release task list
 	delete p_t.p_impl;    // Free task list impl
-	p_t.p_impl = nullptr; // Signal any future uses that this task list has been used already
+	p_t.p_impl = nullptr; // Signal to any future users that this task list has been used already
 }
 
 // ----------------------------------------------------------------------
 
 inline bool scheduler_impl::move_task_to_worker_thread( coroutine_handle_t& c ) {
-	// Iterate over all channels. if we can place the coroutine
+	// Iterate over all channels. If we can place the coroutine
 	// on a channel, do so.
 	for ( auto& ch : channels ) {
 		if ( true == ch->try_push( c ) ) {
@@ -324,26 +328,35 @@ Scheduler::~Scheduler() {
 // ----------------------------------------------------------------------
 
 void defer_task::await_suspend( std::coroutine_handle<TaskPromise> h ) noexcept {
-	// ----------| Invariant: At this point the coroutine pointed
-	// to by h has been fully suspended. This is guaranteed by the Standard.
+
+	// ----------| Invariant: At this point the coroutine pointed to by h 
+	// has been fully suspended. This is guaranteed by the c++ standard.
 
 	// Check if we have a scheduler available via the promise.
 	//
-	// If not, we have not been placed onto the scheduler,
+	// If not, this means we have not been placed onto the scheduler,
 	// and we should not start execution yet.
 	if ( h.promise().scheduler ) {
+
+		// If there is a scheduler available, this means that the current
+		// coroutine has been suspended mid-way.
+
 		auto& task_list = h.promise().p_task_list;
-		// put the current coroutine to the back of the scheduler queue
+
+		// Put the current coroutine to the back of the scheduler queue
 		// as it has been fully suspended at this point.
 
 		task_list->push_task( h.promise().get_return_object() );
 
-		// take next task from front of scheduler queue -
-		// we can do this so that multiple threads can share the
-		// scheduling workload potentially.
+		// --- Eager Workers --- 
+		// 
+		// Eagerly try to fetch & execute the next task from the front of the 
+		// scheduler queue -
+		// We do this so that multiple threads can share the
+		// scheduling workload.
 		//
-		// but we can also disable that, so that there is only one thread
-		// that does the scheduling, and that removes elements from the
+		// But we can also disable that, so that there is only one thread
+		// that does the scheduling, and removing elements from the
 		// queue.
 
 		coroutine_handle_t c = task_list->pop_task();
@@ -355,8 +368,8 @@ void defer_task::await_suspend( std::coroutine_handle<TaskPromise> h ) noexcept 
 		}
 	}
 
-	// Note: If we drop off here, we must do so whilst being in the scheduling thread -
-	// as this will return to where the resume() command was issued.
+	// Note: Once we drop off here, controy will return to where the resume() 
+	// command that brought us here was issued.
 }
 
 // ----------------------------------------------------------------------
@@ -365,8 +378,5 @@ void finalize_task::await_suspend( std::coroutine_handle<TaskPromise> h ) noexce
 	// This is the last time that this coroutine will be awakened
 	// we do not suspend it anymore after this
 	h.promise().p_task_list->decrement_task_count();
-	//	std::cout << "Final suspend for coroutine." << std::endl
-	//	          << std::flush;
-
 	h.destroy(); // are we allowed to destroy here?
 }
