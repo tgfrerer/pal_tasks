@@ -78,7 +78,7 @@ struct TaskPromise {
 	Task get_return_object() {
 		return { Task::from_promise( *this ) };
 	}
-	suspend_task initial_suspend() noexcept {
+	std::suspend_always initial_suspend() noexcept {
 		return {};
 	}
 	finalize_task   final_suspend() noexcept { return {}; }

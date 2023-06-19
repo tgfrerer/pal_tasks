@@ -332,48 +332,38 @@ void suspend_task::await_suspend( std::coroutine_handle<TaskPromise> h ) noexcep
 
 	auto& promise = h.promise();
 
-	// Check if we have a scheduler available via the promise.
-	//
-	// If not, this means we have not been placed onto the scheduler,
-	// and we should not start execution yet.
-	if ( promise.scheduler ) {
+	auto& task_list = promise.p_task_list;
 
-		// If there is a scheduler available, this means that the current
-		// coroutine has been suspended mid-way.
+	// Put the current coroutine to the back of the scheduler queue
+	// as it has been fully suspended at this point.
 
-		auto& task_list = promise.p_task_list;
+	task_list->push_task( promise.get_return_object() );
 
-		// Put the current coroutine to the back of the scheduler queue
-		// as it has been fully suspended at this point.
+	{
+		// We must unblock/awake the scheduling thread each time we suspend
+		// a coroutine so that the scheduling worker may pick up work again,
+		// in case it had been put to sleep earlier.
+		promise.p_task_list->block_flag.clear( std::memory_order_release );
+		promise.p_task_list->block_flag.notify_one(); // wake up worker just in case
+	}
 
-		task_list->push_task( promise.get_return_object() );
+	{
+		// --- Eager Workers ---
+		//
+		// Eagerly try to fetch & execute the next task from the front of the
+		// scheduler queue -
+		// We do this so that multiple threads can share the
+		// scheduling workload.
+		//
+		// But we can also disable that, so that there is only one thread
+		// that does the scheduling, and removing elements from the
+		// queue.
 
-		{
-			// We must unblock/awake the scheduling thread each time we suspend
-			// a coroutine so that the scheduling worker may pick up work again,
-			// in case it had been put to sleep earlier.
-			promise.p_task_list->block_flag.clear( std::memory_order_release );
-			promise.p_task_list->block_flag.notify_one(); // wake up worker just in case
-		}
+		coroutine_handle_t c = task_list->pop_task();
 
-		{
-			// --- Eager Workers ---
-			//
-			// Eagerly try to fetch & execute the next task from the front of the
-			// scheduler queue -
-			// We do this so that multiple threads can share the
-			// scheduling workload.
-			//
-			// But we can also disable that, so that there is only one thread
-			// that does the scheduling, and removing elements from the
-			// queue.
-
-			coroutine_handle_t c = task_list->pop_task();
-
-			if ( c ) {
-				assert( !c.done() && "task must not be done" );
-				c();
-			}
+		if ( c ) {
+			assert( !c.done() && "task must not be done" );
+			c();
 		}
 	}
 
