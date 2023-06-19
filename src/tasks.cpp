@@ -367,7 +367,7 @@ void suspend_task::await_suspend( std::coroutine_handle<TaskPromise> h ) noexcep
 		}
 	}
 
-	// Note: Once we drop off here, controy will return to where the resume()
+	// Note: Once we drop off here, control will return to where the resume()
 	// command that brought us here was issued.
 }
 

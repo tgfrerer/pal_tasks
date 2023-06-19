@@ -10,15 +10,19 @@ struct Task : std::coroutine_handle<TaskPromise> {
 
 struct suspend_task {
 	// if await_ready is false, then await_suspend will be called
-	bool await_ready() noexcept { return false; };
-	void await_suspend( std::coroutine_handle<::TaskPromise> h ) noexcept;
+	constexpr bool await_ready() noexcept {
+		return false;
+	};
+	void await_suspend( std::coroutine_handle<TaskPromise> h ) noexcept;
 	void await_resume() noexcept {};
 };
 
 struct finalize_task {
 	// if await_ready is false, then await_suspend will be called
-	bool await_ready() noexcept { return false; };
-	void await_suspend( std::coroutine_handle<::TaskPromise> h ) noexcept;
+	constexpr bool await_ready() noexcept {
+		return false;
+	};
+	void await_suspend( std::coroutine_handle<TaskPromise> h ) noexcept;
 	void await_resume() noexcept {};
 };
 
