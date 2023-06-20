@@ -10,8 +10,7 @@
 using coroutine_handle_t = std::coroutine_handle<TaskPromise>;
 
 // A channel is a thread-safe primitive to communicate with worker threads -
-// each worker thread has exactly one channel. We use one channel per worker
-// thread to feed coroutine handles to the worker thread. Once a channel contains
+// each worker thread has exactly one channel. Once a channel contains
 // a payload it is blocked (you cannot push anymore handles onto this channel).
 // The channel gets free and ready to receive another handle as soon as the
 // worker thread has finished processing the current handle.
