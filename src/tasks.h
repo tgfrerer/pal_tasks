@@ -3,6 +3,9 @@
 #include <stdint.h>
 
 struct TaskPromise; // ffdecl.
+class scheduler_impl; // ffdecl, pimpl
+class task_list_o;    // ffdecl
+class TaskList;       // ffdecl
 
 struct Task : std::coroutine_handle<TaskPromise> {
 	using promise_type = ::TaskPromise;
@@ -17,6 +20,17 @@ struct suspend_task {
 	void await_resume() noexcept {};
 };
 
+struct await_tasks {
+	// if await_ready is false, then await_suspend will be called
+	constexpr bool await_ready() noexcept {
+		return false;
+	};
+	void await_suspend( std::coroutine_handle<TaskPromise> h ) noexcept;
+	void await_resume() noexcept {};
+
+	task_list_o* p_task_list; // owning
+};
+
 struct finalize_task {
 	// if await_ready is false, then await_suspend will be called
 	constexpr bool await_ready() noexcept {
@@ -27,9 +41,6 @@ struct finalize_task {
 };
 
 
-class scheduler_impl;             // ffdecl, pimpl
-class task_list_o;                // ffdecl
-class TaskList;                   // ffdecl
 
 class Scheduler {
 	scheduler_impl* p_impl = nullptr;
@@ -49,6 +60,8 @@ class Scheduler {
 	// Once this call returns, the TaskList that was given as a parameter
 	// has been consumed, and you should not re-use it.
 	void wait_for_task_list( TaskList& p_t );
+
+	await_tasks wait_for_task_list_inner( TaskList& p_t );
 
 	// Create a scheduler with as many hardware threads as possible
 	//  0 ... No worker threads, just one main thread
@@ -88,6 +101,7 @@ struct TaskPromise {
 	finalize_task   final_suspend() noexcept { return {}; }
 	void            return_void(){};
 	void            unhandled_exception(){};
-	scheduler_impl* scheduler   = nullptr; // owned by scheduler
-	task_list_o*    p_task_list = nullptr; // owned by scheduler
+	scheduler_impl* scheduler       = nullptr; // weak: owned by scheduler
+	task_list_o*    p_task_list     = nullptr; // weak: owned by scheduler
+	task_list_o*    child_task_list = nullptr; // weak: the task list we are possibly waiting upon
 };

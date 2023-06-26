@@ -14,6 +14,45 @@ int main() {
 	if ( false ) {
 
 		TaskList tasks{};
+		auto     task_generator = []( Scheduler* scheduler, int i ) -> Task {
+            std::cout << "doing some work: " << i++ << std::endl;
+
+            TaskList inner_list;
+
+            inner_list.add_task( []() -> Task {
+                std::cout << "inside inner task" << std::endl;
+                co_return;
+            }() );
+            inner_list.add_task( []() -> Task {
+                std::cout << "inside another inner task" << std::endl;
+                co_return;
+            }() );
+
+            co_await scheduler->wait_for_task_list_inner( inner_list );
+            // put this coroutine back on the scheduler
+            co_await suspend_task();
+
+            // we have resumed this coroutine from the scheduler
+            std::cout << "resuming work: " << i++ << std::endl;
+
+            // complete work, signal to the compiler that this is a
+            // coroutine for political reasons.
+            co_return;
+		};
+
+		// add many more tasks
+		for ( int i = 0; i != 1; i++ ) {
+			tasks.add_task( task_generator( scheduler, i ) );
+		}
+
+		// Execute all tasks we find on the task list
+		scheduler->wait_for_task_list( tasks );
+	}
+
+	// --- vanilla scenario
+	if ( false ) {
+
+		TaskList tasks{};
 		auto     task_generator = []( int i ) -> Task {
             std::cout << "doing some work: " << i++ << std::endl;
 
@@ -51,38 +90,38 @@ int main() {
 		 */
 
 		TaskList another_task_list{};
-		auto     coro_generator = []( int i, Scheduler* sched ) -> Task {
+		auto     coro_generator = []( uint i, Scheduler* sched ) -> Task {
             std::cout << "first level coroutine: " << std::dec << i++ << " on thread: " << std::hex << std::this_thread::get_id() << std::endl
                       << std::flush;
 
-            std::this_thread::sleep_for( std::chrono::microseconds( rand() % 55000 ) );
+            std::this_thread::sleep_for( std::chrono::microseconds( rand_r( &i ) % 55000 ) );
 
-			auto inner_coro_generator = []( int i, int j ) -> Task {
+            auto inner_coro_generator = []( uint i, int j ) -> Task {
                 std::cout << "\t executing inner coroutine: " << std::dec << i << ":" << j++ << " on thread: " << std::hex << std::this_thread::get_id() << std::endl
                           << std::flush;
 
-                std::this_thread::sleep_for( std::chrono::microseconds( rand() % 40000 ) );
+                std::this_thread::sleep_for( std::chrono::microseconds( rand_r( &i ) % 40000 ) );
                 // this yields control back to the await_suspend method, and to our scheduler
-				co_await suspend_task();
+                co_await suspend_task();
 
-				std::this_thread::sleep_for( std::chrono::microseconds( rand() % 33000 ) );
+                std::this_thread::sleep_for( std::chrono::microseconds( rand_r( &i ) % 33000 ) );
                 std::cout << "\t executing inner coroutine: " << std::dec << i << ":" << j++ << " on thread: " << std::hex << std::this_thread::get_id() << std::endl;
                 co_return;
-			};
+            };
 
-			uint32_t num_tasks = rand() % 30;
+            uint32_t num_tasks = rand_r( &i ) % 30;
 
-			// Create a task list for tasks which are spun off from within this task
-			TaskList inner_task_list{};
+            // Create a task list for tasks which are spun off from within this task
+            TaskList inner_task_list{};
 
 			for ( int j = 0; j != num_tasks; j++ ) {
 				inner_task_list.add_task( inner_coro_generator( i, j * 10 ) );
-			}
+            }
 
-			std::this_thread::sleep_for( std::chrono::nanoseconds( rand() % 40000000 ) );
+            std::this_thread::sleep_for( std::chrono::nanoseconds( rand_r( &i ) % 40000000 ) );
 
-			// Suspend this task
-			co_await suspend_task();
+            // Suspend this task
+            co_await suspend_task();
 
 			// ----------| invariant: we are back after resuming.
 
