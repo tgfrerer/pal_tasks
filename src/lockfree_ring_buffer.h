@@ -63,7 +63,7 @@ class lockfree_ring_buffer_t {
 	    : m_capacity( next_power_of_2( power_of_2_size ) )
 	    , m_power_of_2_mod( m_capacity - 1 )
 	    , buffer( m_capacity, nullptr ) {
-		assert( power_of_2_size && power_of_2_size < 32 );
+		assert( power_of_2_size );
 	}
 	size_t size() {
 		// read high first; make it look less than or equal to its actual size
