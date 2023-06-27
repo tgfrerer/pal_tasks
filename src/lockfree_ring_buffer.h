@@ -44,13 +44,10 @@ inline uint32_t next_power_of_2( uint32_t v ) {
 
 class lockfree_ring_buffer_t {
 	// high and low are generally used together; no point putting them on separate cache lines
-	std::atomic_size_t m_high;
-	char               _cache_padding1[ 64 - sizeof( std::atomic_size_t ) ];
-	std::atomic_size_t m_low;
-	char               _cache_padding2[ 64 - sizeof( std::atomic_size_t ) ];
+	alignas( 64 ) std::atomic_size_t m_high;
+	alignas( 64 ) std::atomic_size_t m_low;
 	uint32_t           m_capacity;
 	uint32_t           m_power_of_2_mod;
-	// buffer must be last - it spills outside of this struct
 	std::vector<void*> buffer;
 
 	lockfree_ring_buffer_t( const lockfree_ring_buffer_t& )            = delete;
