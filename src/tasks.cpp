@@ -233,6 +233,8 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 	}
 }
 
+// ----------------------------------------------------------------------
+
 await_tasks scheduler_impl::wait_for_task_list_inner( TaskList& tl ) {
 
 	if ( tl.p_impl == nullptr ) {
@@ -256,6 +258,30 @@ await_tasks scheduler_impl::wait_for_task_list_inner( TaskList& tl ) {
 	return result;
 }
 
+// ----------------------------------------------------------------------
+
+void await_tasks::await_suspend( std::coroutine_handle<TaskPromise> h ) noexcept {
+
+	// the task that waits on a tasklist is now fully suspended.
+
+	// If the child task list is empty, then we can progress immediately.
+
+	if ( 0 == this->p_task_list->get_tasks_count() ) {
+		h.resume();
+		return;
+	}
+
+	h.promise().child_task_list               = this->p_task_list;
+	h.promise().child_task_list->waiting_task = h.address(); // tell the task list that somebody is awaiting it.
+
+	// At this point, we must distribute the elements fron this task list onto the
+	// scheduler. otherwise there is no chance for forward progress.
+
+	// we do this by using a blocking call to the scheduler, where the
+	// scheduler takes control of this task list and will add it to its current
+	// run of tasklists to process.
+	h.promise().scheduler->async_task_lists.push( this->p_task_list ); // take ownership of task_list into scheduler
+}
 // ----------------------------------------------------------------------
 
 void scheduler_impl::wait_for_task_list( TaskList& tl ) {
@@ -467,27 +493,4 @@ void finalize_task::await_suspend( std::coroutine_handle<TaskPromise> h ) noexce
 	// we do not suspend it anymore after this
 	h.promise().p_task_list->decrement_task_count();
 	h.destroy();
-}
-
-void await_tasks::await_suspend( std::coroutine_handle<TaskPromise> h ) noexcept {
-
-	// the task that waits on a tasklist is now fully suspended.
-
-	// If the child task list is empty, then we can progress immediately.
-
-	if ( 0 == this->p_task_list->get_tasks_count() ) {
-		h.resume();
-		return;
-	}
-
-	h.promise().child_task_list               = this->p_task_list;
-	h.promise().child_task_list->waiting_task = h.address(); // tell the task list that somebody is awaiting it.
-
-	                                                         // At this point, we must distribute the elements fron this task list onto the
-	// scheduler. otherwise there is no chance for forward progress.
-
-	// we do this by using a non-blocking call to the scheduler, where the
-	// scheduler takes control of this task list and will add it to its current
-	// tot of tasklists to process.
-	h.promise().scheduler->async_task_lists.push( this->p_task_list ); // take ownership of task_list into scheduler
 }
