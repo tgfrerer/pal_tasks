@@ -304,6 +304,15 @@ void scheduler_impl::wait_for_task_list( TaskList& tl ) {
 
 	// Distribute work, as long as there is work to distribute
 
+	/*
+
+	task list is allocated using a linked list -
+	maybe we should just use an arena allocator for that
+	and allocate space upfront so that we don't have to allocate,
+	and deallocate. there is not a real reason for a linked list
+	anyway.
+
+	 */
 	struct tl_list_item {
 		task_list_o*  tl;
 		tl_list_item* previous;
