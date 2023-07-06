@@ -109,9 +109,9 @@ int main() {
                 co_return;
             };
 
-            uint32_t num_tasks = rand_r( &i ) % 4;
+			uint32_t num_tasks = rand_r( &i ) % 10;
 
-            // Create a task list for tasks which are spun off from within this task
+			// Create a task list for tasks which are spun off from within this task
             TaskList inner_task_list{};
 
 			for ( int j = 0; j != num_tasks; j++ ) {
@@ -139,7 +139,7 @@ int main() {
             co_return;
 		};
 
-		for ( int i = 0; i != 3; i++ ) {
+		for ( int i = 0; i != 30; i++ ) {
 			another_task_list.add_task( coro_generator( i * 10, scheduler ) );
 		}
 
