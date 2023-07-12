@@ -458,7 +458,7 @@ void suspend_task::await_suspend( std::coroutine_handle<TaskPromise> h ) noexcep
 
 	auto& promise = h.promise();
 
-	auto& task_list = promise.p_task_list;
+	task_list_o* task_list = promise.p_task_list;
 
 	// Put the current coroutine to the back of the scheduler queue
 	// as it has been fully suspended at this point.
