@@ -17,25 +17,31 @@ int main() {
 		auto     task_generator = []( Scheduler* scheduler, int i ) -> Task {
             std::cout << "doing some work: " << i++ << std::endl;
 
-            TaskList inner_list;
+			{
+				TaskList inner_list;
 
-            inner_list.add_task( []() -> Task {
-                std::cout << "inside inner task" << std::endl;
-                co_return;
-            }() );
-            inner_list.add_task( []() -> Task {
-                std::cout << "inside another inner task" << std::endl;
-                co_return;
-            }() );
+				inner_list.add_task( []() -> Task {
+					std::cout << "inside inner task" << std::endl;
+					co_return;
+				}() );
+				inner_list.add_task( []() -> Task {
+					std::cout << "inside another inner task" << std::endl;
+					co_return;
+				}() );
 
-            co_await scheduler->wait_for_task_list_inner( inner_list );
-            // put this coroutine back on the scheduler
-            co_await suspend_task();
+				if ( false ) {
+					scheduler->wait_for_task_list( inner_list );
+				} else {
+					co_await scheduler->wait_for_task_list_inner( inner_list );
+				}
+				// put this coroutine back on the scheduler
+				co_await suspend_task();
+			}
 
-            // we have resumed this coroutine from the scheduler
-            std::cout << "resuming work: " << i++ << std::endl;
+			// we have resumed this coroutine from the scheduler
+			std::cout << "resuming work: " << i++ << std::endl;
 
-            // complete work, signal to the compiler that this is a
+			// complete work, signal to the compiler that this is a
             // coroutine for political reasons.
             co_return;
 		};
@@ -123,15 +129,18 @@ int main() {
             // Suspend this task
             co_await suspend_task();
 
-            // ----------| invariant: we are back after resuming.
+			// ----------| invariant: we are back after resuming.
 
-            // std::cout << "executing first level coroutine: " << std::dec << i << " on thread: " << std::hex << std::this_thread::get_id() << std::endl;
+			// std::cout << "executing first level coroutine: " << std::dec << i << " on thread: " << std::hex << std::this_thread::get_id() << std::endl;
+			if ( true ) {
+				// Execute, and wait for tasks that we spin out from this task
+				co_await sched->wait_for_task_list_inner( inner_task_list );
+			} else {
+				sched->wait_for_task_list( inner_task_list );
+			}
 
-            // Execute, and wait for tasks that we spin out from this task
-            co_await sched->wait_for_task_list_inner( inner_task_list );
-
-            // Suspend this task again
-            co_await suspend_task();
+			// Suspend this task again
+			co_await suspend_task();
 
             // ----------| invariant: we are back after resuming.
 
