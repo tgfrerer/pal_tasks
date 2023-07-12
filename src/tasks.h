@@ -28,7 +28,7 @@ struct await_tasks {
 	void await_suspend( std::coroutine_handle<TaskPromise> h ) noexcept;
 	void await_resume() noexcept {};
 
-	task_list_o* p_task_list; // owning
+	task_list_o* p_task_list; // owning: careful: don't access after await_suspend has been called
 };
 
 struct finalize_task {

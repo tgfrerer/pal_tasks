@@ -32,7 +32,7 @@ struct Channel {
 
 		// If there is a thread blocked on this operation, we
 		// unblock it here.
-		flag.notify_one();
+		flag.notify_all();
 
 		return true;
 	}
@@ -55,18 +55,17 @@ struct Channel {
 };
 
 class task_list_o {
-  public:
-	alignas( 64 ) std::atomic_flag block_flag;     // flag used to signal that dependent tasks have completed
-  private:
 	void*                  waiting_task = nullptr; // weak: if this tasklist was issued by a coroutine, this is the coroutine to resume if the task list gets completed.
 	lockfree_ring_buffer_t tasks;
-	alignas( 64 ) std::atomic_size_t num_tasks;    // number of tasks, only gets decremented if taks has been removed
+	alignas( 64 ) std::atomic_size_t task_count;   // number of tasks, only gets decremented if task has been removed
+
+	std::atomic_size_t protect_cleanup = 0;        // whether there is a task still in-flight
 
   public:
-
 	task_list_o( uint32_t capacity_hint = 32 ) // start with capacity of 32
 	    : tasks( capacity_hint )
-	    , num_tasks( 0 ) {
+	    , task_count( 0 )
+	    , protect_cleanup( 0 ) {
 	}
 
 	~task_list_o() {
@@ -89,22 +88,13 @@ class task_list_o {
 		return Task::from_address( tasks.try_pop() );
 	}
 
-	// Return the number of tasks which are both in flight and waiting
-	//
-	// Note this is not the same as tasks.size() as any tasks which are being
-	// processed and are in flight will not show up on the task list.
-	//
-	// num_tasks gets decremented only if a task was fully completed.
-	inline size_t get_tasks_count() {
-		return num_tasks;
-	}
 
 	// Add a new task to the task list - only allowed in setup phase,
 	// where only one thread has access to the task list.
 	void add_task( coroutine_handle_t& c ) {
 		c.promise().p_task_list = this;
 		tasks.unsafe_initial_dynamic_push( c.address() );
-		num_tasks++;
+		++task_count;
 	}
 
 	void tag_all_tasks_with_scheduler( scheduler_impl* p_scheduler ) {
@@ -115,17 +105,45 @@ class task_list_o {
 		    p_scheduler );
 	}
 
+	/// Return the number of tasks which are both in flight and waiting
+	///
+	/// Note this is not the same as tasks.size() as any tasks which are being
+	/// processed and are in flight will not show up on the task list.
+	///
+	/// num_tasks gets decremented only if a task was fully completed
+	///
+	/// The additional protect_decrement_cleanup will be greater than 0
+	/// iff decrement_task_count is still in-progress.
+	inline size_t get_task_count() {
+		return task_count + protect_cleanup;
+	}
+
+	/// NOTE: decrementing num_tasks *and* clearing up in
+	/// case we're at the last task must happen as an atomic
+	/// operation. Otherwise, whoever tests for num_tasks
+	/// from the outside and finds 0 may delete our object
+	/// from under our feet.
+	///
+	/// Conversely, we must also make sure that we don't
+	/// receive the same reading for num_tasks more than once,
+	/// otherwise our cleanup code would get executed more than
+	/// once.
+	///
+	/// To do this without a mutex, we add a flag which protects
+	/// our cleanup function
 	void decrement_task_count() {
-		size_t num_flags = --num_tasks;
-		if ( num_flags == 0 ) {
-			block_flag.clear( std::memory_order_release );
-			block_flag.notify_one(); // unblock us on block flag.
+
+		this->protect_cleanup++; // add guard against deletion - once get_task_count returns 0 users may delete this task_list_o
+
+		if ( 0 == --task_count ) {
 			if ( this->waiting_task ) {
 				// if this task list was issued from within a coroutine
 				// using an await, this will resume the waiting coroutine.
 				coroutine_handle_t::from_address( this->waiting_task ).resume();
 			}
 		}
+
+		this->protect_cleanup--; // remove guard against deletion
 	}
 	friend struct await_tasks;
 };
@@ -168,7 +186,7 @@ class scheduler_impl {
 		for ( auto* c : channels ) {
 			if ( c ) {
 				c->flag.test_and_set(); // Set flag so that if there is a worker blocked on this flag, it may proceed.
-				c->flag.notify_one();   // Notify the worker thread (if any worker thread is waiting) that the flag has flipped.
+				c->flag.notify_all();   // Notify the worker thread (if any worker thread is waiting) that the flag has flipped.
 				                        // without notify, waiters will not be notified that the flag has flipped.
 			}
 		}
@@ -219,6 +237,8 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 					    continue;
 				    }
 
+				    // if there is no handle, try fetching and executing an async task list.
+
 				    // Wait for flag to be set
 				    //
 				    // The flag is set on any of the following:
@@ -266,14 +286,20 @@ void await_tasks::await_suspend( std::coroutine_handle<TaskPromise> h ) noexcept
 
 	// the task that waits on a tasklist is now fully suspended.
 
-	// If the child task list is empty, then we can progress immediately.
+	// we must take a local variable here as we cannot guarantee to access `this` after
+	// the handle gets resumed, which may cause the awaiter object to destroy.
+	task_list_o* p_task_list = this->p_task_list;
 
-	if ( 0 == this->p_task_list->get_tasks_count() ) {
+	if ( 0 == p_task_list->get_task_count() ) {
+		// If the child task list is empty, then we can progress immediately.
 		h.resume();
 		return;
 	}
 
-	h.promise().child_task_list               = this->p_task_list;
+	/// ------ WARNING: DO NOT ACCESS `THIS` ANYMORE AS IT MAY BE DESTROYED
+	/// ------ AFTER THE HANDLE HAS COMPLETED RESUME
+
+	h.promise().child_task_list               = p_task_list;
 	h.promise().child_task_list->waiting_task = h.address(); // tell the task list that somebody is awaiting it.
 
 	// At this point, we must distribute the elements fron this task list onto the
@@ -282,7 +308,10 @@ void await_tasks::await_suspend( std::coroutine_handle<TaskPromise> h ) noexcept
 	// we do this by using a blocking call to the scheduler, where the
 	// scheduler takes control of this task list and will add it to its current
 	// run of tasklists to process.
-	h.promise().scheduler->async_task_lists.push( this->p_task_list ); // take ownership of task_list into scheduler
+
+	h.promise().scheduler->async_task_lists.push( p_task_list ); // take ownership of task_list into scheduler
+
+	                                                             // this will drop us back to where resume was called()
 }
 // ----------------------------------------------------------------------
 
@@ -324,7 +353,7 @@ void scheduler_impl::wait_for_task_list( TaskList& tl ) {
 
 	while ( task_list ) {
 
-		while ( task_list->tl->get_tasks_count() ) {
+		while ( task_list->tl->get_task_count() ) {
 
 			task_list_o* tl = task_list->tl;
 			// ----------| Invariant: There are Tasks in this Task List which have not yet completed
@@ -361,16 +390,7 @@ void scheduler_impl::wait_for_task_list( TaskList& tl ) {
 				// We could not fetch a task from the task list - this means
 				// that there are tasks in-progress that we must wait for.
 
-				if ( tl->block_flag.test_and_set( std::memory_order::acq_rel ) ) {
-					std::cout << "blocking thread " << std::this_thread::get_id() << " on [" << tl << "]" << std::endl;
-					// Wait for the flag to be set - this is the case if any of these happen:
-					//    * the scheduler is destroyed
-					//    * the last task of the task list has completed, and the task list is now empty.
-					tl->block_flag.wait( true, std::memory_order::acquire );
-					std::cout << "resuming thread " << std::this_thread::get_id() << " on [" << tl << "]" << std::endl;
-				} else {
-					std::cout << "spinning thread " << std::this_thread::get_id() << " on [" << tl << "]" << std::endl;
-				}
+				// std::cout << "spinning thread " << std::this_thread::get_id() << " on [" << tl << "]" << std::endl;
 
 				continue;
 			}
@@ -466,14 +486,6 @@ void suspend_task::await_suspend( std::coroutine_handle<TaskPromise> h ) noexcep
 	task_list->push_task( promise.get_return_object() );
 
 	{
-		// We must unblock/awake the scheduling thread each time we suspend
-		// a coroutine so that the scheduling worker may pick up work again,
-		// in case it had been put to sleep earlier.
-		promise.p_task_list->block_flag.clear( std::memory_order_release );
-		promise.p_task_list->block_flag.notify_one(); // wake up worker just in case
-	}
-
-	{
 		// --- Eager Workers ---
 		//
 		// Eagerly try to fetch & execute the next task from the front of the
@@ -503,5 +515,6 @@ void finalize_task::await_suspend( std::coroutine_handle<TaskPromise> h ) noexce
 	// This is the last time that this coroutine will be awakened
 	// we do not suspend it anymore after this
 	h.promise().p_task_list->decrement_task_count();
+	// ---
 	h.destroy();
 }
