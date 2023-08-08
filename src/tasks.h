@@ -61,6 +61,10 @@ class Scheduler {
 	// has been consumed, and you should not re-use it.
 	void wait_for_task_list( TaskList& p_t );
 
+	// Execute all tasks in task list, then resume the current task, if
+	// it is a coroutine. This call can be awaited.
+	//
+	// Takes posession of task list object.
 	await_tasks wait_for_task_list_inner( TaskList& p_t );
 
 	// Create a scheduler with as many hardware threads as possible
