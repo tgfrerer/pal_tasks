@@ -208,7 +208,11 @@ class scheduler_impl {
 
 	// Execute all tasks in the task list, then invalidate the task list object
 	void wait_for_task_list( TaskList& p_t );
+
+	// Execute all tasks in the task list, then invalidate the task list object.
+	// This version of the function returns an awaitable.
 	await_tasks wait_for_task_list_inner( TaskList& p_t );
+
 	friend struct await_tasks;
 };
 
