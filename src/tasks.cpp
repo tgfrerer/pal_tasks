@@ -103,14 +103,14 @@ class task_list_o {
 		    p_scheduler );
 	}
 
-	/// Return the number of tasks which are both in flight and waiting
+	/// Return the number of tasks which are both in-flight and waiting
 	///
 	/// Note this is not the same as tasks.size() as any tasks which are being
 	/// processed and are in flight will not show up on the task list.
 	///
 	/// num_tasks gets decremented only if a task was fully completed
 	///
-	/// The additional protect_decrement_cleanup will be greater than 0
+	/// The additional protect_cleanup will be greater than 0
 	/// iff decrement_task_count is still in-progress.
 	inline size_t get_task_count() {
 		return task_count + protect_cleanup;
