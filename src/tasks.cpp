@@ -180,9 +180,21 @@ class scheduler_impl {
 	scheduler_impl( int32_t num_worker_threads = 0 );
 
 	~scheduler_impl() {
-		// We must unblock any threads which are currently waiting on a flag signal for more work
-		// as there is no more work coming, we must artificially signal the flag so that these
-		// worker threads can resume to completion.
+
+		// We must request all threads to stop, as they will shortly be destroyed.
+		//
+		// We must then nudge any threads which are currently waiting on a flag signal
+		// so that they get a chance to notice that they have been stopped - otherwise
+		// they will wait to infinity.
+
+		for ( auto& t : threads ) {
+			t.request_stop();
+		}
+
+		// Nudge sleeping threads by flipping the wait flag explicitly - any sleeping
+		// threads so nudged now wake up and get a chance to see that they have been
+		// stopped and will exit their inner loop gracefully.
+		//
 		for ( auto* c : channels ) {
 			if ( c ) {
 				c->flag.test_and_set(); // Set flag so that if there is a worker blocked on this flag, it may proceed.
@@ -190,6 +202,7 @@ class scheduler_impl {
 				                        // without notify, waiters will not be notified that the flag has flipped.
 			}
 		}
+
 		// We must wait until all the threads have been joined.
 		// Deleting a jthread object implicitly stops (sets the stop_token) and joins.
 		threads.clear();
@@ -237,9 +250,7 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 					    continue;
 				    }
 
-				    // if there is no handle, try fetching and executing an async task list.
-
-				    // Wait for flag to be set
+				    // Sleep until flag gets set
 				    //
 				    // The flag is set on any of the following:
 				    //   * A new job has been placed in the channel
