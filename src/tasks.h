@@ -53,8 +53,8 @@ class Scheduler {
 	Scheduler& operator=( Scheduler&& )      = delete; // move assignment
 
   public:
-	// Execute all tasks in the task list, then free the task list object
-	// this takes possession of the task list object, and acts as if it was
+	// Execute all tasks in the task list, then free the task list object.
+	// This takes possession of the task list object, and acts as if it was
 	// a blocking call.
 	//
 	// Once this call returns, the TaskList that was given as a parameter
