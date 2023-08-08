@@ -54,11 +54,10 @@ struct Channel {
 };
 
 class task_list_o {
-	void*                  waiting_task = nullptr; // weak: if this tasklist was issued by a coroutine, this is the coroutine to resume if the task list gets completed.
+	alignas( 64 ) std::atomic_size_t task_count;                // number of tasks, only gets decremented if task has been removed
+	void* waiting_task                               = nullptr; // weak: if this tasklist was issued by a coroutine, this is the coroutine to resume if the task list gets completed.
+	alignas( 64 ) std::atomic_size_t protect_cleanup = 0;       // whether there is a task still in-flight
 	lockfree_ring_buffer_t tasks;
-	alignas( 64 ) std::atomic_size_t task_count;   // number of tasks, only gets decremented if task has been removed
-
-	std::atomic_size_t protect_cleanup = 0;        // whether there is a task still in-flight
 
   public:
 	task_list_o( uint32_t capacity_hint = 32 ) // start with capacity of 32
