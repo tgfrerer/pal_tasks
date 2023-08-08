@@ -38,7 +38,6 @@ struct Channel {
 	}
 
 	~Channel() {
-
 		// Once the channel accepts a coroutine handle, it becomes the
 		// owner of the handle. If there are any leftover valid handles
 		// that we own when this object dips into ovlivion, we must clean
@@ -358,18 +357,19 @@ void scheduler_impl::wait_for_task_list( TaskList& tl ) {
 		tl_list_item* previous;
 	};
 
-	tl_list_item* task_list = new tl_list_item;
-	task_list->previous     = nullptr;
-	task_list->tl           = tl.p_impl;
+	std::vector<task_list_o*> task_stack;
+	task_stack.push_back( tl.p_impl );
 
-	while ( task_list ) {
+	while ( !task_stack.empty() ) {
 
-		while ( task_list->tl->get_task_count() ) {
+		task_list_o* task_list = task_stack.back();
+		task_stack.pop_back();
 
-			task_list_o* tl = task_list->tl;
+		while ( task_list->get_task_count() ) {
+
 			// ----------| Invariant: There are Tasks in this Task List which have not yet completed
 
-			coroutine_handle_t c = tl->pop_task();
+			coroutine_handle_t c = task_list->pop_task();
 
 			if ( c == nullptr ) {
 
@@ -385,11 +385,8 @@ void scheduler_impl::wait_for_task_list( TaskList& tl ) {
 
 				if ( async_tl ) {
 
-					auto new_tl_item      = new tl_list_item();
-					new_tl_item->previous = task_list;
-					new_tl_item->tl       = async_tl;
-
-					task_list = new_tl_item;
+					task_stack.push_back( task_list );
+					task_list = async_tl;
 					// we have changed the task list, let's try if we
 					// can fetch some work from this task list.
 					continue;
@@ -427,19 +424,13 @@ void scheduler_impl::wait_for_task_list( TaskList& tl ) {
 			c();
 		}
 
-		// pop last element off task list
-		tl_list_item* prev = task_list;
-		task_list          = task_list->previous;
+		delete task_list;
 
-		// we can now free the object that held the task linked list item,
+		// pop last element off task list
+
 		// and then the task list
 		//
 		// Once all tasks have been complete, release task list
-
-		delete prev->tl;    // delete task list object (which we owned)
-		prev->tl = nullptr; // signal that the task list object has been deleted
-
-		delete ( prev );
 	}
 
 	tl.p_impl = nullptr; // Signal to any future users that this task list has been used already
