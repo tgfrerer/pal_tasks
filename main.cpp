@@ -3,7 +3,13 @@
 
 #include <thread>
 
+int raytracer_main( void ); // from raytracer.cpp
+
 int main() {
+
+	raytracer_main();
+
+	return 0;
 
 	// Create a scheduler with as many hardware threads as possible
 	//  0 ... No worker threads, just one main thread
@@ -11,7 +17,7 @@ int main() {
 	// -1 ... As many worker threads as cpus, -1
 	Scheduler* scheduler = Scheduler::create( -1 );
 
-	if ( false ) {
+	if ( true ) {
 
 		TaskList tasks{};
 		auto     task_generator = []( Scheduler* scheduler, int i ) -> Task {
@@ -47,7 +53,7 @@ int main() {
 		};
 
 		// add many more tasks
-		for ( int i = 0; i != 1; i++ ) {
+		for ( int i = 0; i != 10; i++ ) {
 			tasks.add_task( task_generator( scheduler, i ) );
 		}
 
@@ -56,7 +62,7 @@ int main() {
 	}
 
 	// --- vanilla scenario
-	if ( false ) {
+	if ( true ) {
 
 		TaskList tasks{};
 		auto     task_generator = []( int i ) -> Task {
@@ -122,16 +128,16 @@ int main() {
 
 			for ( int j = 0; j != num_tasks; j++ ) {
 				inner_task_list.add_task( inner_coro_generator( i, j * 10 ) );
-            }
+			}
 
-            std::this_thread::sleep_for( std::chrono::nanoseconds( rand_r( &i ) % 40000000 ) );
+			std::this_thread::sleep_for( std::chrono::microseconds( rand_r( &i ) % 40000 ) );
 
-            // Suspend this task
-            co_await suspend_task();
+			// Suspend this task
+			co_await suspend_task();
 
 			// ----------| invariant: we are back after resuming.
 
-			// std::cout << "executing first level coroutine: " << std::dec << i << " on thread: " << std::hex << std::this_thread::get_id() << std::endl;
+			std::cout << "executing first level coroutine: " << std::dec << i << " on thread: " << std::hex << std::this_thread::get_id() << std::endl;
 			if ( true ) {
 				// Execute, and wait for tasks that we spin out from this task
 				co_await sched->wait_for_task_list_inner( inner_task_list );
