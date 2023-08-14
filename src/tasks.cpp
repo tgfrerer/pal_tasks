@@ -15,8 +15,8 @@ using coroutine_handle_t = std::coroutine_handle<TaskPromise>;
 // The channel gets free and ready to receive another handle as soon as the
 // worker thread has finished processing the current handle.
 struct Channel {
-	void*            handle; // storage for channel payload: one single handle. void means that the channel is free.
-	std::atomic_flag flag;   // signal that the current channel is busy.
+	void*            handle = nullptr; // storage for channel payload: one single handle. void means that the channel is free.
+	std::atomic_flag flag   = false;   // signal that the current channel is busy.
 
 	bool try_push( coroutine_handle_t& h ) {
 
