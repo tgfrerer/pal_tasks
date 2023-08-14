@@ -28,6 +28,9 @@
 #include <iostream>
 #include <cassert>
 
+#include <thread>
+#include "src/lockfree_ring_buffer.h"
+
 #include "src/tasks.h"
 
 #if defined __linux__ || defined __APPLE__
@@ -226,6 +229,7 @@ void render( int num_threads, const char* choice, const std::vector<Sphere>& sph
 	static const float    fov = 30, aspectratio = width / float( height );
 	static const float    angle = tan( M_PI * 0.5 * fov / 180. );
 	// Trace rays
+	std::cout << "Num Threads: " << num_threads << std::endl;
 
 	if ( choice && *choice == '1' ) {
 		// use scheduler
@@ -234,7 +238,7 @@ void render( int num_threads, const char* choice, const std::vector<Sphere>& sph
 		Scheduler* scheduler = Scheduler::create( num_threads );
 		if ( choice && *choice == '1' ) {
 
-			std::cout << "One Task List for all pixels" << std::endl;
+			std::cout << "Coroutines: One Task List for all pixels" << std::endl;
 
 			TaskList tl( width * height );
 			for ( unsigned y = 0; y < height; ++y ) {
@@ -258,7 +262,7 @@ void render( int num_threads, const char* choice, const std::vector<Sphere>& sph
 
 			// tasklists that wait on task lists
 
-			std::cout << "One Task List per row" << std::endl;
+			std::cout << "Coroutines: One Task List per row" << std::endl;
 
 			for ( unsigned y = 0; y < height; ++y ) {
 				TaskList tl( width );
@@ -277,22 +281,102 @@ void render( int num_threads, const char* choice, const std::vector<Sphere>& sph
 				scheduler->wait_for_task_list( tl );
 			}
 		}
-		std::cout << "Num Threads: " << num_threads << std::endl;
 		delete scheduler;
 
 	} else {
 		// do not use scheduler
+		choice++;
 
-		std::cout << "Baseline" << std::endl;
+		if ( choice && *choice == '0' ) {
+			std::cout << "Single-Threaded // Baseline" << std::endl;
 
-		for ( unsigned y = 0; y < height; ++y ) {
-			for ( unsigned x = 0; x < width; ++x ) {
-				float xx = ( 2 * ( ( x + 0.5 ) * invWidth ) - 1 ) * angle * aspectratio;
-				float yy = ( 1 - 2 * ( ( y + 0.5 ) * invHeight ) ) * angle;
+			for ( unsigned y = 0; y < height; ++y ) {
+				for ( unsigned x = 0; x < width; ++x ) {
+					float xx = ( 2 * ( ( x + 0.5 ) * invWidth ) - 1 ) * angle * aspectratio;
+					float yy = ( 1 - 2 * ( ( y + 0.5 ) * invHeight ) ) * angle;
+					Vec3f raydir( xx, yy, -1 );
+					raydir.normalize();
+					image[ y * width + x ] = trace( Vec3f( 0 ), raydir, spheres, 0 );
+				}
+			}
+		} else {
+			std::cout << "Task-Based" << std::endl;
+
+			std::vector<std::jthread> threads;
+			std::atomic_size_t        inflight_tasks = width * height;
+
+			threads.reserve( num_threads );
+
+			// each thread may signal that it is done.
+			// if a thread is done then it may look for some more work
+			// if there is not more work, we want to finish.
+
+			lockfree_ring_buffer_t buf( width * height );
+
+			struct task_t {
+				// funtion pointer
+				// parameters
+				void ( *fp )( task_t* params );
+				unsigned                   x;
+				unsigned                   y;
+				Vec3f*                     image;
+				std::vector<Sphere> const* spheres;
+			};
+
+			auto f_ptr = []( task_t* params ) {
+				float xx = ( 2 * ( ( params->x + 0.5 ) * invWidth ) - 1 ) * angle * aspectratio;
+				float yy = ( 1 - 2 * ( ( params->y + 0.5 ) * invHeight ) ) * angle;
 				Vec3f raydir( xx, yy, -1 );
 				raydir.normalize();
-				image[ y * width + x ] = trace( Vec3f( 0 ), raydir, spheres, 0 );
+				params->image[ params->y * width + params->x ] =
+				    trace( Vec3f( 0 ), raydir, *params->spheres, 0 );
+			};
+
+			std::vector<task_t> task_store;
+			task_store.reserve( width * height );
+			// build up tasks
+
+			for ( unsigned y = 0; y < height; ++y ) {
+				for ( unsigned x = 0; x < width; ++x ) {
+					task_store.emplace_back( f_ptr, x, y, image, &spheres );
+				}
 			}
+
+			for ( auto& t : task_store ) {
+				buf.unsafe_initial_dynamic_push( &t );
+			}
+
+			for ( int i = 0; i != num_threads; i++ ) {
+				threads.emplace_back( [ &inflight_tasks, &buf ]( std::stop_token should_stop ) {
+					std::cout << "New worker thread on CPU " << sched_getcpu()
+					          << std::endl;
+					while ( !should_stop.stop_requested() ) {
+						// execute a work unit if we could find one
+						task_t* task = reinterpret_cast<task_t*>( buf.try_pop() );
+						if ( task ) {
+							task->fp( task );
+							--inflight_tasks;
+							// std::cout << inflight_tasks << std::endl;
+						}
+					}
+				} );
+			}
+
+			// wait until number of completed tasks is width * height
+
+			while ( inflight_tasks ) {
+				std::this_thread::sleep_for( std::chrono::microseconds( 10 ) );
+			}
+
+			std::cout << "inflight tasks have completed" << std::endl;
+			for ( auto& t : threads ) {
+				t.request_stop();
+			}
+			// once all work units have been completed, we can join all threads
+			threads.clear();
+
+			// we implement a basic thread-based scheduler here so that we have something to
+			// compare against
 		}
 	}
 
@@ -331,7 +415,7 @@ int raytracer_main( int argc, char** argv ) {
 	// argument 0 is the path to the application
 	// argument 1 is the number of threads specified, if any
 	int         num_threads = argc >= 2 ? atoi( argv[ 1 ] ) : 1;
-	char const* choices     = argc >= 3 ? argv[ 2 ] : "10";
+	char const* choices     = argc >= 3 ? argv[ 2 ] : "01";
 
 	render( num_threads, choices, spheres );
 

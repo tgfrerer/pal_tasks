@@ -6,6 +6,7 @@
 #include <thread>
 #include <vector>
 #include "lockfree_ring_buffer.h"
+#include "sched.h"
 
 using coroutine_handle_t = std::coroutine_handle<TaskPromise>;
 
@@ -242,7 +243,15 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 		    // Thread worker implementation
 		    //
 		    []( std::stop_token stop_token, Channel* ch ) {
+			    // sleep until flag gets set
+			    ch->flag.wait( false );
+
+			    std::cout << "New worker thread on CPU " << sched_getcpu()
+			              << std::endl;
+
 			    while ( !stop_token.stop_requested() ) {
+				    //				    std::cout << "Executing on cpu: " << sched_getcpu()
+				    //				              << std::endl;
 
 				    if ( ch->handle ) {
 					    coroutine_handle_t::from_address( ch->handle ).resume(); // resume coroutine
@@ -265,6 +274,17 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 			    delete ch;
 		    },
 		    channels.back() );
+		cpu_set_t cpuset;
+		CPU_ZERO( &cpuset );
+		CPU_SET( i + 1, &cpuset );
+		assert( 0 == pthread_setaffinity_np( threads.back().native_handle(), sizeof( cpuset ), &cpuset ) );
+	}
+	std::this_thread::sleep_for( std::chrono::milliseconds( 20 ) );
+	for ( int i = 0; i != num_worker_threads; i++ ) {
+
+		auto& c = channels[ i ];
+		c->flag.test_and_set();
+		c->flag.notify_one(); // start work on thread
 	}
 }
 
@@ -387,7 +407,6 @@ void scheduler_impl::wait_for_task_list( TaskList& tl ) {
 				// We could not fetch a task from the task list - this means
 				// that there are tasks in-progress that we must wait for.
 
-				// std::cout << "spinning thread " << std::this_thread::get_id() << " on [" << tl << "]" << std::endl;
 
 				continue;
 			}
