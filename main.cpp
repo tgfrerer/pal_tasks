@@ -3,11 +3,11 @@
 
 #include <thread>
 
-int raytracer_main( void ); // from raytracer.cpp
+int raytracer_main( int argc, char** argv ); // from raytracer.cpp
 
-int main() {
+int main( int argc, char** argv ) {
 
-	raytracer_main();
+	raytracer_main( argc, argv );
 
 	return 0;
 
@@ -17,7 +17,7 @@ int main() {
 	// -1 ... As many worker threads as cpus, -1
 	Scheduler* scheduler = Scheduler::create( -1 );
 
-	if ( true ) {
+	if ( 1 ) {
 
 		TaskList tasks{};
 		auto     task_generator = []( Scheduler* scheduler, int i ) -> Task {

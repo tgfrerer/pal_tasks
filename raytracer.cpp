@@ -217,7 +217,7 @@ Vec3f trace(
 // trace it and return a color. If the ray hits a sphere, we return the color of the
 // sphere at the intersection point, else we return the background color.
 //[/comment]
-void render( const std::vector<Sphere>& spheres ) {
+void render( int num_threads, const char* choice, const std::vector<Sphere>& spheres ) {
 
 	static const unsigned width    = 1920;
 	static const unsigned height   = 768 * 2;
@@ -227,12 +227,12 @@ void render( const std::vector<Sphere>& spheres ) {
 	static const float    angle = tan( M_PI * 0.5 * fov / 180. );
 	// Trace rays
 
-	if ( 0 ) {
+	if ( choice && *choice == '1' ) {
 		// use scheduler
+		choice++;
 
-		static const int cNUM_THREADS = 10;
-		Scheduler*       scheduler    = Scheduler::create( cNUM_THREADS );
-		if ( 0 ) {
+		Scheduler* scheduler = Scheduler::create( num_threads );
+		if ( choice && *choice == '1' ) {
 
 			std::cout << "One Task List for all pixels" << std::endl;
 
@@ -253,6 +253,7 @@ void render( const std::vector<Sphere>& spheres ) {
 			}
 
 			scheduler->wait_for_task_list( tl );
+
 		} else {
 
 			// tasklists that wait on task lists
@@ -276,7 +277,7 @@ void render( const std::vector<Sphere>& spheres ) {
 				scheduler->wait_for_task_list( tl );
 			}
 		}
-		std::cout << "Num Threads: " << cNUM_THREADS << std::endl;
+		std::cout << "Num Threads: " << num_threads << std::endl;
 		delete scheduler;
 
 	} else {
@@ -313,8 +314,10 @@ void render( const std::vector<Sphere>& spheres ) {
 // and 1 light (which is also a sphere). Then, once the scene description is complete
 // we render that scene, by calling the render() function.
 //[/comment]
-int raytracer_main( void ) {
+int raytracer_main( int argc, char** argv ) {
+
 	srand48( 13 );
+
 	std::vector<Sphere> spheres;
 	// position, radius, surface color, reflectivity, transparency, emission color
 	spheres.push_back( Sphere( Vec3f( 0.0, -10004, -20 ), 10000, Vec3f( 0.20, 0.20, 0.20 ), 0, 0.0 ) );
@@ -324,7 +327,13 @@ int raytracer_main( void ) {
 	spheres.push_back( Sphere( Vec3f( -5.5, 0, -15 ), 3, Vec3f( 0.90, 0.90, 0.90 ), 1, 0.0 ) );
 	// light
 	spheres.push_back( Sphere( Vec3f( 0.0, 20, -30 ), 3, Vec3f( 0.00, 0.00, 0.00 ), 0, 0.0, Vec3f( 3 ) ) );
-	render( spheres );
+
+	// argument 0 is the path to the application
+	// argument 1 is the number of threads specified, if any
+	int         num_threads = argc >= 2 ? atoi( argv[ 1 ] ) : 1;
+	char const* choices     = argc >= 3 ? argv[ 2 ] : "10";
+
+	render( num_threads, choices, spheres );
 
 	return 0;
 }
