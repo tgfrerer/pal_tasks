@@ -41,7 +41,7 @@ struct Channel {
 	~Channel() {
 		// Once the channel accepts a coroutine handle, it becomes the
 		// owner of the handle. If there are any leftover valid handles
-		// that we own when this object dips into ovlivion, we must clean
+		// that we own when this object dips into oblivion, we must clean
 		// them up first.
 		//
 		if ( this->handle ) {
