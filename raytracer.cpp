@@ -363,6 +363,9 @@ void render( int num_threads, const char* choice, const std::vector<Sphere>& sph
 			}
 
 			// wait until number of completed tasks is width * height
+			//
+			// this means that the scheduling thread does not do any useful work
+			// anymore apart from checking that all other work is completed.
 
 			while ( inflight_tasks ) {
 				std::this_thread::sleep_for( std::chrono::microseconds( 10 ) );
