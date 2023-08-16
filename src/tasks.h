@@ -11,20 +11,17 @@ struct Task : std::coroutine_handle<TaskPromise> {
 	using promise_type = ::TaskPromise;
 };
 
+// clang-format off
 struct suspend_task {
 	// if await_ready is false, then await_suspend will be called
-	constexpr bool await_ready() noexcept {
-		return false;
-	};
+	constexpr bool await_ready() noexcept { return false; };
 	void await_suspend( std::coroutine_handle<TaskPromise> h ) noexcept;
 	void await_resume() noexcept {};
 };
 
 struct await_tasks {
 	// if await_ready is false, then await_suspend will be called
-	constexpr bool await_ready() noexcept {
-		return false;
-	};
+	constexpr bool await_ready() noexcept { return false; };
 	void await_suspend( std::coroutine_handle<TaskPromise> h ) noexcept;
 	void await_resume() noexcept {};
 
@@ -33,14 +30,12 @@ struct await_tasks {
 
 struct finalize_task {
 	// if await_ready is false, then await_suspend will be called
-	constexpr bool await_ready() noexcept {
-		return false;
-	};
+	constexpr bool await_ready() noexcept { return false; };
 	void await_suspend( std::coroutine_handle<TaskPromise> h ) noexcept;
 	void await_resume() noexcept {};
 };
 
-
+// clang-format on
 
 class Scheduler {
 	scheduler_impl* p_impl = nullptr;
