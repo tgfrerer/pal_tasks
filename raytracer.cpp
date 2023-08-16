@@ -338,7 +338,13 @@ void render( int num_threads, const char* choice, const std::vector<Sphere>& sph
 
 			for ( unsigned y = 0; y < height; ++y ) {
 				for ( unsigned x = 0; x < width; ++x ) {
-					task_store.emplace_back( f_ptr, x, y, image, &spheres );
+					task_t t;
+					t.fp      = f_ptr;
+					t.x       = x;
+					t.y       = y;
+					t.image   = image;
+					t.spheres = &spheres;
+					task_store.emplace_back( t );
 				}
 			}
 
