@@ -449,6 +449,16 @@ void scheduler_impl::wait_for_task_list( TaskList& tl ) {
 inline bool scheduler_impl::move_task_to_worker_thread( coroutine_handle_t& c ) {
 	// Iterate over all channels. If we can place the coroutine
 	// on a channel, do so.
+	//
+	// FIXME: this pays no respect to which thread originally processed the
+	// handle - ideally we would prefer to resume a coroutine on the same thread
+	// as the one on which it was suspended, as we would expect a better chance
+	// of caches still being hot on this thread.
+	//
+	// it would also be better if we would only touch our threads when they are idle.
+	// perhaps it would be better if the threads would pick up work, and not the scheduler
+	// pushed the work onto the threads?
+	//
 	for ( auto& ch : channels ) {
 		if ( true == ch->try_push( c ) ) {
 			return true;
