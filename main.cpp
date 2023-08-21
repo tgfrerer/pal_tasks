@@ -11,6 +11,7 @@ int main( int argc, char** argv ) {
 
 	// argument 0 is the path to the application
 	// argument 1 is the number of threads specified, if any
+	// argument 2 is which tests to run, a string of 0 or 1
 	const int   num_threads = argc >= 2 ? atoi( argv[ 1 ] ) : -1;
 	char const* choices     = argc >= 3 ? argv[ 2 ] : "001";
 
