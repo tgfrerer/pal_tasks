@@ -10,9 +10,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(SOURCES main.cpp)
 set(SOURCES ${SOURCES} raytracer.cpp )
 
+
 if(TASKS_THREAD_AFFINITY)
     set(SOURCES ${SOURCES} src/tasks_ta.cpp)
 else(TASKS_THREAD_AFFINITY)
+add_compile_definitions(TASKS_LEGACY)
     set(SOURCES ${SOURCES} src/tasks.cpp)
 endif(TASKS_THREAD_AFFINITY)
 

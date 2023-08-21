@@ -44,7 +44,7 @@ int main( int argc, char** argv ) {
 					co_return;
 				}() );
 
-				if ( false ) {
+				if ( true ) {
 					scheduler->wait_for_task_list( inner_list );
 				} else {
 					co_await scheduler->wait_for_task_list_inner( inner_list );
@@ -153,7 +153,7 @@ int main( int argc, char** argv ) {
 			// ----------| invariant: we are back after resuming.
 
 			std::cout << "executing first level coroutine: " << std::dec << i << " on thread: " << std::hex << std::this_thread::get_id() << std::endl;
-			if ( true ) {
+			if ( false ) {
 				// Execute, and wait for tasks that we spin out from this task
 				co_await sched->wait_for_task_list_inner( inner_task_list );
 			} else {

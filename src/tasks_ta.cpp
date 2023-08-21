@@ -32,12 +32,19 @@ using coroutine_handle_t = std::coroutine_handle<TaskPromise>;
  *
  * */
 
-// A channel is a thread-safe primitive to communicate with worker threads -
 // each worker thread has exactly one channel. Once a channel contains
 // a payload it is blocked (you cannot push anymore handles onto this channel).
 // The channel gets free and ready to receive another handle as soon as the
 // worker thread has finished processing the current handle.
 struct Channel {
+
+	// we want to be able to add to the current channel whenever we want
+	// whatever we add to the current channel becomes owned by the current channel -
+	// everything that we add is a move operation
+
+	// multiple threads may add to the channel, only one thread (the channel's thread itself)
+	// will ever remove from the channel - unless we allow for work-stealing.
+
 	void*            handle = nullptr; // storage for channel payload: one single handle. void means that the channel is free.
 	std::atomic_flag flag   = false;   // signal that the current channel is busy.
 
@@ -78,15 +85,12 @@ struct Channel {
 
 class task_list_o {
 	alignas( 64 ) std::atomic_size_t task_count;                // number of tasks, only gets decremented if task has been removed
-	void* waiting_task                               = nullptr; // weak: if this tasklist was issued by a coroutine, this is the coroutine to resume if the task list gets completed.
-	alignas( 64 ) std::atomic_size_t protect_cleanup = 0;       // whether there is a task still in-flight
 	lockfree_ring_buffer_t tasks;
 
   public:
 	task_list_o( uint32_t capacity_hint = 32 ) // start with capacity of 32
 	    : tasks( capacity_hint )
-	    , task_count( 0 )
-	    , protect_cleanup( 0 ) {
+	    , task_count( 0 ) {
 	}
 
 	~task_list_o() {
@@ -126,46 +130,14 @@ class task_list_o {
 		    p_scheduler );
 	}
 
-	/// Return the number of tasks which are both in-flight and waiting
-	///
-	/// Note this is not the same as tasks.size() as any tasks which are being
-	/// processed and are in flight will not show up on the task list.
-	///
-	/// num_tasks gets decremented only if a task was fully completed
-	///
-	/// The additional protect_cleanup will be greater than 0
-	/// iff decrement_task_count is still in-progress.
 	inline size_t get_task_count() {
-		return task_count + protect_cleanup;
+		return task_count;
 	}
 
-	/// NOTE: decrementing num_tasks *and* clearing up in
-	/// case we're at the last task must happen as an atomic
-	/// operation. Otherwise, whoever tests for num_tasks
-	/// from the outside and finds 0 may delete our object
-	/// from under our feet.
-	///
-	/// Conversely, we must also make sure that we don't
-	/// receive the same reading for num_tasks more than once,
-	/// otherwise our cleanup code would get executed more than
-	/// once.
-	///
-	/// To do this without a mutex, we add a flag which protects
-	/// our cleanup function
 	void decrement_task_count() {
-
-		this->protect_cleanup++; // add guard against deletion - once get_task_count returns 0 users may delete this task_list_o
-
-		if ( 0 == --task_count ) {
-			if ( this->waiting_task ) {
-				// if this task list was issued from within a coroutine
-				// using an await, this will resume the waiting coroutine.
-				coroutine_handle_t::from_address( this->waiting_task ).resume();
-			}
-		}
-
-		this->protect_cleanup--; // remove guard against deletion
+		--task_count;
 	}
+
 	friend struct await_tasks;
 };
 
@@ -189,10 +161,6 @@ TaskList::~TaskList() {
 // ----------------------------------------------------------------------
 
 class scheduler_impl {
-
-	bool move_task_to_worker_thread( coroutine_handle_t& c );
-
-	lockfree_ring_buffer_t async_task_lists{ 256 };
 
   public:
 	std::vector<Channel*>     channels; // non-owning - channels are owned by their threads
@@ -234,7 +202,7 @@ class scheduler_impl {
 
 	// Execute all tasks in the task list, then invalidate the task list object.
 	// This version of the function returns an awaitable.
-	await_tasks wait_for_task_list_inner( TaskList& p_t );
+	// await_tasks wait_for_task_list_inner( TaskList& p_t );
 
 	friend struct await_tasks;
 };
@@ -263,6 +231,7 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 
 	// NOTE THAT BY DEFAULT WE DON'T HAVE ANY WORKER THREADS
 	//
+	cpu_set_t cpuset;
 	for ( int i = 0; i != num_worker_threads; i++ ) {
 		channels.emplace_back( new Channel() );
 		threads.emplace_back(
@@ -302,7 +271,6 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 		    },
 		    channels.back() );
 
-		cpu_set_t cpuset;
 		CPU_ZERO( &cpuset );
 		CPU_SET( i + 1, &cpuset );
 		assert( 0 == pthread_setaffinity_np( threads.back().native_handle(), sizeof( cpuset ), &cpuset ) );
@@ -311,181 +279,45 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 
 // ----------------------------------------------------------------------
 
-await_tasks scheduler_impl::wait_for_task_list_inner( TaskList& tl ) {
-
-	if ( tl.p_impl == nullptr ) {
-		assert( false && "Task list must have been freshly initialised. Has this task list been waited for already?" );
-		return {};
-	}
-
-	// --------| Invariant: TaskList is valid
-
-	// tag all tasks with their scheduler,
-	// so that they know where they belong to
-	tl.p_impl->tag_all_tasks_with_scheduler( this );
-
-	// create an awaitable that can own a tasklist
-
-	// await_tasks::await_suspend is where control will go next.
-	await_tasks result;
-	result.p_task_list = tl.p_impl; // ownership transfer
-	tl.p_impl          = nullptr;   // since the original object does not own, it must not delete.
-
-	return result;
-}
-
-// ----------------------------------------------------------------------
-
 void await_tasks::await_suspend( std::coroutine_handle<TaskPromise> h ) noexcept {
-
-	// the task that waits on a tasklist is now fully suspended.
-
-	// we must take a local variable here as we cannot guarantee to access `this` after
-	// the handle gets resumed, which may cause the awaiter object to destroy.
-	task_list_o* p_task_list = this->p_task_list;
-
-	if ( 0 == p_task_list->get_task_count() ) {
-		// If the child task list is empty, then we can progress immediately.
-		h.resume();
-		return;
-	}
-
-	/// ------ WARNING: DO NOT ACCESS `THIS` ANYMORE AS IT MAY BE DESTROYED
-	/// ------ AFTER THE HANDLE HAS COMPLETED RESUME
-
-	h.promise().child_task_list               = p_task_list;
-	h.promise().child_task_list->waiting_task = h.address(); // tell the task list that somebody is awaiting it.
-
-	// At this point, we must distribute the elements fron this task list onto the
-	// scheduler. otherwise there is no chance for forward progress.
-
-	// we do this by using a blocking call to the scheduler, where the
-	// scheduler takes control of this task list and will add it to its current
-	// run of tasklists to process.
-
-	h.promise().scheduler->async_task_lists.push( p_task_list ); // take ownership of task_list into scheduler
-
-	                                                             // this will drop us back to where resume was called()
+	// not implemented yet
 }
 // ----------------------------------------------------------------------
 
 void scheduler_impl::wait_for_task_list( TaskList& tl ) {
 
-	if ( tl.p_impl == nullptr ) {
+	task_list_o* task_list = tl.p_impl;
+	tl.p_impl              = nullptr; // we take possession of this task list
+
+	if ( task_list == nullptr ) {
 		assert( false && "Task list must have been freshly initialised. Has this task list been waited for already?" );
 		return;
 	}
 
 	// --------| Invariant: TaskList is valid
 
-	// Execute tasks in this task list until there are no more tasks left
-	// to execute.
-
 	// Before we start executing tasks we must take ownership of them
 	// by tagging them so that they know which scheduler they belong to.
-	tl.p_impl->tag_all_tasks_with_scheduler( this );
+	task_list->tag_all_tasks_with_scheduler( this );
 
 	// Distribute work, as long as there is work to distribute
 
-	std::vector<task_list_o*> task_stack;
-	task_stack.push_back( tl.p_impl );
+	while ( task_list->get_task_count() ) {
 
-	while ( !task_stack.empty() ) {
+		// ----------| Invariant: There are Tasks in this Task List which have not yet completed
 
-		task_list_o* task_list = task_stack.back();
-		task_stack.pop_back();
+		// TODO: consume all tasks into a queue of tasks that this scheduler must process.
 
-		while ( task_list->get_task_count() ) {
+		coroutine_handle_t t = task_list->pop_task();
 
-			// ----------| Invariant: There are Tasks in this Task List which have not yet completed
-
-			coroutine_handle_t c = task_list->pop_task();
-
-			if ( c == nullptr ) {
-
-				// we could not fetch anything from our main task list - but
-				// perhaps there is a tasklist from a sub-task where there
-				// are still some tasks that need some work...
-				// let's see if there is an extra task list that we may access
-
-				// get a task list that has been placed onto the scheduler
-
-				// if we can steal a task list from the scheduler, then we make this our new task list.
-				task_list_o* async_tl = static_cast<task_list_o*>( this->async_task_lists.try_pop() );
-
-				if ( async_tl ) {
-
-					task_stack.push_back( task_list );
-					task_list = async_tl;
-					// we have changed the task list, let's try if we
-					// can fetch some work from this task list.
-					continue;
-				}
-			}
-
-			if ( c == nullptr ) {
-
-				// We could not fetch a task from the task list - this means
-				// that there are tasks in-progress that we must wait for.
-
-
-				continue;
-			}
-
-			// ----------| Invariant: current coroutine is valid
-
-			// Find a free channel. If there is, then place this handle in the channel,
-			// which means that it will be executed on the worker thread associated
-			// with this channel.
-
-			if ( move_task_to_worker_thread( c ) ) {
-				// Pushing consumes the coroutine handle - that is, it becomes owned by the channel
-				// who owns it for the worker thread.
-				//
-				// If we made it in here, the handle was successfully offloaded to a worker thread.
-				//
-				// The worker thread must now execute the payload, and the task will decrement the
-				// counter for the current TaskList upon completion.
-				continue;
-			}
-
-			// --------| Invariant: All worker threads are busy - or there are no worker threads: we must execute on this thread
-			c();
-		}
-
-		delete task_list;
-
-		// pop last element off task list
-
-		// and then the task list
-		//
-		// Once all tasks have been complete, release task list
-	}
-
-	tl.p_impl = nullptr; // Signal to any future users that this task list has been used already
-}
-
-// ----------------------------------------------------------------------
-
-inline bool scheduler_impl::move_task_to_worker_thread( coroutine_handle_t& c ) {
-	// Iterate over all channels. If we can place the coroutine
-	// on a channel, do so.
-	//
-	// FIXME: this pays no respect to which thread originally processed the
-	// handle - ideally we would prefer to resume a coroutine on the same thread
-	// as the one on which it was suspended, as we would expect a better chance
-	// of caches still being hot on this thread.
-	//
-	// it would also be better if we would only touch our threads when they are idle.
-	// perhaps it would be better if the threads would pick up work, and not the scheduler
-	// pushed the work onto the threads?
-	//
-	for ( auto& ch : channels ) {
-		if ( true == ch->try_push( c ) ) {
-			return true;
+		// --------| Invariant: All worker threads are busy - or there are no worker threads: we must execute on this thread
+		if ( t ) {
+			t();
 		}
 	}
-	return false;
+
+	// Once all tasks have been complete, release task list
+	delete task_list;
 }
 
 // ----------------------------------------------------------------------
@@ -498,9 +330,6 @@ void Scheduler::wait_for_task_list( TaskList& p_t ) {
 	p_impl->wait_for_task_list( p_t );
 }
 
-await_tasks Scheduler::wait_for_task_list_inner( TaskList& p_t ) {
-	return p_impl->wait_for_task_list_inner( p_t );
-}
 
 Scheduler* Scheduler::create( int32_t num_worker_threads ) {
 	return new Scheduler( num_worker_threads );

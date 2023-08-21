@@ -28,6 +28,7 @@ struct await_tasks {
 	task_list_o* p_task_list; // owning: careful: don't access after await_suspend has been called
 };
 
+
 struct finalize_task {
 	// if await_ready is false, then await_suspend will be called
 	constexpr bool await_ready() noexcept { return false; };
@@ -91,16 +92,21 @@ class TaskList {
 };
 
 struct TaskPromise {
-	Task get_return_object() {
-		return { Task::from_promise( *this ) };
-	}
-	std::suspend_always initial_suspend() noexcept {
-		return {};
-	}
-	finalize_task   final_suspend() noexcept { return {}; }
-	void            return_void(){};
-	void            unhandled_exception(){};
+
+	// clang-format off
+	Task                get_return_object() { return { Task::from_promise( *this ) }; }
+	std::suspend_always initial_suspend() noexcept { return {}; }
+	finalize_task       final_suspend() noexcept { return {}; }
+	void                return_void() { }
+	void                unhandled_exception() { }
+	// clang-format on
+
+#if defined( TASKS_LEGACY )
 	scheduler_impl* scheduler       = nullptr; // weak: owned by scheduler
 	task_list_o*    p_task_list     = nullptr; // weak: owned by scheduler
 	task_list_o*    child_task_list = nullptr; // weak: the task list we are possibly waiting upon
+#else
+	scheduler_impl* scheduler   = nullptr; // weak: owned by scheduler
+	task_list_o*    p_task_list = nullptr; // weak: owned by scheduler
+#endif
 };
