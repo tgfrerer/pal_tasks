@@ -7,6 +7,7 @@
 #include <vector>
 #include "lockfree_ring_buffer.h"
 #include "sched.h"
+#include <mutex>
 
 using coroutine_handle_t = std::coroutine_handle<TaskPromise>;
 
@@ -88,6 +89,9 @@ class task_list_o {
 	lockfree_ring_buffer_t tasks;
 
   public:
+	task_list_o* next;                         // intrusive list
+	task_list_o* prev;                         // intrusive list
+
 	task_list_o( uint32_t capacity_hint = 32 ) // start with capacity of 32
 	    : tasks( capacity_hint )
 	    , task_count( 0 ) {
@@ -162,6 +166,14 @@ TaskList::~TaskList() {
 
 class scheduler_impl {
 
+	std::mutex   protect_task_list_list;
+	task_list_o* task_lists_front = nullptr; // linked list of tasks
+	task_list_o* task_lists_back  = nullptr; // last element in linked list of tasks
+
+	/// atomic operation
+	bool insert_task_list_at_end( task_list_o* tl );
+	bool remove_task_list( task_list_o* tl );
+
   public:
 	std::vector<Channel*>     channels; // non-owning - channels are owned by their threads
 	std::vector<std::jthread> threads;
@@ -211,6 +223,67 @@ class scheduler_impl {
 // and we want to have one queue per thread. each task that gets suspended suspends to the queue of the thread on which it
 // is currently executing, so that it will be resumed on the same thread as the thread on which it was suspended.
 // we do this so that we can maintain thread-affinity, and don't have to move memory with tasks from thread to thread;
+
+bool scheduler_impl::insert_task_list_at_end( task_list_o* tl ) {
+	std::scoped_lock lock( this->protect_task_list_list );
+
+	if ( task_lists_front == nullptr && task_lists_back == nullptr ) {
+		// inserting first element
+		task_lists_front = task_lists_back = tl;
+		tl->prev                           = nullptr;
+		tl->next                           = nullptr;
+		return true;
+	} else {
+		tl->prev        = task_lists_back;
+		tl->prev->next  = tl;
+		task_lists_back = tl;
+		tl->next        = nullptr;
+		return true;
+	}
+}
+
+// removes a task_list_o from linked list of task lists owned by the scheduler,
+// if it can be found.
+// you still have to deallocate the object in question.
+bool scheduler_impl::remove_task_list( task_list_o* tl ) {
+	std::scoped_lock lock( this->protect_task_list_list );
+
+	// 1 find element which matches tl
+	// if found, remove element.
+	task_list_o* el = task_lists_front;
+
+	while ( el ) {
+		if ( el == tl ) {
+			break;
+		}
+		el = el->next;
+	}
+
+	if ( el ) {
+
+		// --------- | Invariant: we have found the element in question
+
+		if ( el->prev ) {
+			el->prev->next = el->next;
+		} else {
+			// we are deleting the first element
+			task_lists_front = el->next;
+		}
+
+		if ( el->next ) {
+			el->next->prev = el->prev;
+		} else {
+			// we are deleting the last element
+			task_lists_back = el->prev;
+		}
+
+		return true;
+
+	} else {
+		// we have not found the element in question
+		return false;
+	}
+}
 
 scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 
@@ -300,6 +373,36 @@ void scheduler_impl::wait_for_task_list( TaskList& tl ) {
 	// by tagging them so that they know which scheduler they belong to.
 	task_list->tag_all_tasks_with_scheduler( this );
 
+	// the scheduler needs a large queue onto which we can place our workloads -
+	// we don't have something like this right now.
+
+	/**
+	 *
+	 * What would the scheduler queue need to do for us? atomic insertion and deletion
+	 *
+	 * FIFO - things need to be consumed first in first out
+	 *
+	 * We would need this to be a queue and it would need to be able to re-allocate
+	 *
+	 * Channels pull from this queue, channels don't push onto this queue.
+	 * only schedulers push onto this queue.
+	 *
+	 * we can use the TaskList as the source of tasks - they stay in there until pulled
+	 * into channels / workers. How do we know that a channel still has some elements that
+	 * can be pulled?
+	 *
+	 * We can keep a linked list of channels in the scheduler - the scheduler owns all task lists
+	 * that are held by the linked list.
+
+	 */
+
+	// add current task list to the list of task lists that
+	// are owned by this scheduler.
+	this->insert_task_list_at_end( task_list );
+
+	// TODO: put this taks list onto the list of task lists that this scheduler
+	// keeps as sources for tasks
+
 	// Distribute work, as long as there is work to distribute
 
 	while ( task_list->get_task_count() ) {
@@ -316,6 +419,7 @@ void scheduler_impl::wait_for_task_list( TaskList& tl ) {
 		}
 	}
 
+	this->remove_task_list( task_list );
 	// Once all tasks have been complete, release task list
 	delete task_list;
 }
