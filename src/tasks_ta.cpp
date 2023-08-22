@@ -373,11 +373,8 @@ void scheduler_impl::wait_for_task_list( TaskList& tl ) {
 			if ( t == nullptr ) {
 				// no more work in this scheduler.
 				if ( 0 == this->workload.priority_0.size() ) {
-
 					// if there are no tasks left on neither the channel nor the scheduler,
 					// then we should probably sleep this worker.
-
-					// ch->flag.wait( false ); // wait until flag set
 				}
 				break;
 			} else {
