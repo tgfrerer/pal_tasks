@@ -390,7 +390,7 @@ void render( int num_threads, const char* choice, const std::vector<Sphere>& sph
 	}
 
 	// Save result to a PPM image (keep these flags if you compile under Windows)
-	std::ofstream ofs( "./untitled.ppm", std::ios::out | std::ios::binary );
+	std::ofstream ofs( "./image.ppm", std::ios::out | std::ios::binary );
 	ofs << "P6\n"
 	    << width << " " << height << "\n255\n";
 	for ( unsigned i = 0; i < width * height; ++i ) {
