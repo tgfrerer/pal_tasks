@@ -246,8 +246,8 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 			    // sleep until flag gets set
 			    ch->flag.wait( false );
 
-			    // std::cout << "New worker thread on CPU " << sched_getcpu()
-			    //           << std::endl;
+			    std::cout << "New worker thread on CPU " << sched_getcpu()
+			              << std::endl;
 
 			    while ( !stop_token.stop_requested() ) {
 				    //				    std::cout << "Executing on cpu: " << sched_getcpu()
