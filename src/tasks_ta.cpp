@@ -285,8 +285,9 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 		    channels.back() );
 
 		CPU_ZERO( &cpuset );
-		CPU_SET( i + 1, &cpuset );
-		assert( 0 == pthread_setaffinity_np( threads.back().native_handle(), sizeof( cpuset ), &cpuset ) );
+		CPU_SET( i + 2, &cpuset );
+		bool err = pthread_setaffinity_np( threads.back().native_handle(), sizeof( cpuset ), &cpuset );
+		assert( err == 0 && "SetAffinity did not work." );
 	}
 
 	// notify all channels that their flags have been set -
