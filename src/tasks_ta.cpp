@@ -227,7 +227,7 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 		    //
 		    []( std::stop_token stop_token, Channel* ch ) {
 			    // sleep until flag gets set
-			    ch->flag.wait( false );
+			    // ch->flag.wait( false );
 
 			    std::cout << "New worker thread on CPU " << sched_getcpu()
 			              << std::endl;
@@ -292,14 +292,13 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 
 	// notify all channels that their flags have been set -
 
-	if ( 0 )
-		for ( auto* c : channels ) {
-			if ( c ) {
-				c->flag.test_and_set(); // Set flag so that if there is a worker blocked on this flag, it may proceed.
-				c->flag.notify_one();   // Notify the worker thread (if any worker thread is waiting) that the flag has flipped.
-				                        // without notify, waiters will not be notified that the flag has flipped.
-			}
+	for ( auto* c : channels ) {
+		if ( c ) {
+			c->flag.test_and_set(); // Set flag so that if there is a worker blocked on this flag, it may proceed.
+			c->flag.notify_one();   // Notify the worker thread (if any worker thread is waiting) that the flag has flipped.
+			                        // without notify, waiters will not be notified that the flag has flipped.
 		}
+	}
 }
 
 // ----------------------------------------------------------------------
