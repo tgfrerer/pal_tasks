@@ -9,8 +9,9 @@
 #include "sched.h"
 #include <mutex>
 
-static constexpr auto WORKER_EAGERNESS = 2; // how many tasks to load into current worker on every
-using coroutine_handle_t               = std::coroutine_handle<TaskPromise>;
+static constexpr auto WORKER_EAGERNESS = 4; // how many tasks to load into current worker on every
+
+using coroutine_handle_t = std::coroutine_handle<TaskPromise>;
 struct work_queue_t {
 	lockfree_ring_buffer_t priority_0{ 4096 }; // workload for this worker at priority 0
 };
@@ -50,7 +51,7 @@ struct Channel {
 	// multiple threads may add to the channel, only one thread (the channel's thread itself)
 	// will ever remove from the channel - unless we allow for work-stealing.
 
-	// std::atomic_flag flag = false; // signal that the current channel is busy.
+	std::atomic_flag flag = false; // signal that the current channel is busy.
 
 	scheduler_impl* scheduler = nullptr;
 
@@ -63,6 +64,7 @@ struct Channel {
 		while ( t ) {
 			// std::cout << "WARNING: leftover task in channel." << std::endl;
 			// std::cout << "destroying task: " << t << std::endl;
+			assert( false );
 			coroutine_handle_t::from_address( t ).destroy();
 			t = workload.priority_0.try_pop();
 		}
@@ -150,7 +152,7 @@ TaskList::~TaskList() {
 class scheduler_impl {
 
 	lockfree_ring_buffer_t task_queue{ 4096 }; // space for 4096 tasks
-	work_queue_t           work_queue;         // work queue for workloads executed on the same thread as the scheduler
+	work_queue_t           workload;           // work queue for workloads executed on the same thread as the scheduler
 
   public:
 	std::vector<Channel*>     channels; // non-owning - channels are owned by their threads
@@ -174,13 +176,13 @@ class scheduler_impl {
 		// threads so nudged now wake up and get a chance to see that they have been
 		// stopped and will exit their inner loop gracefully.
 		//
-		// for ( auto* c : channels ) {
-		//	if ( c ) {
-		//		c->flag.test_and_set(); // Set flag so that if there is a worker blocked on this flag, it may proceed.
-		//		c->flag.notify_all();   // Notify the worker thread (if any worker thread is waiting) that the flag has flipped.
-		//		                        // without notify, waiters will not be notified that the flag has flipped.
-		//	}
-		//}
+		for ( auto* c : channels ) {
+			if ( c ) {
+				c->flag.test_and_set(); // Set flag so that if there is a worker blocked on this flag, it may proceed.
+				c->flag.notify_one();   // Notify the worker thread (if any worker thread is waiting) that the flag has flipped.
+				                        // without notify, waiters will not be notified that the flag has flipped.
+			}
+		}
 
 		// We must wait until all the threads have been joined.
 		// Deleting a jthread object implicitly stops (sets the stop_token) and joins.
@@ -225,10 +227,10 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 		    //
 		    []( std::stop_token stop_token, Channel* ch ) {
 			    // sleep until flag gets set
-			    // ch->flag.wait( false );
+			    ch->flag.wait( false );
 
-			    // std::cout << "New worker thread on CPU " << sched_getcpu()
-			    //           << std::endl;
+			    std::cout << "New worker thread on CPU " << sched_getcpu()
+			              << std::endl;
 
 			    while ( !stop_token.stop_requested() ) {
 				    //				    std::cout << "Executing on cpu: " << sched_getcpu()
@@ -286,6 +288,17 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 		CPU_SET( i + 1, &cpuset );
 		assert( 0 == pthread_setaffinity_np( threads.back().native_handle(), sizeof( cpuset ), &cpuset ) );
 	}
+
+	// notify all channels that their flags have been set -
+
+	if ( 0 )
+		for ( auto* c : channels ) {
+			if ( c ) {
+				c->flag.test_and_set(); // Set flag so that if there is a worker blocked on this flag, it may proceed.
+				c->flag.notify_one();   // Notify the worker thread (if any worker thread is waiting) that the flag has flipped.
+				                        // without notify, waiters will not be notified that the flag has flipped.
+			}
+		}
 }
 
 // ----------------------------------------------------------------------
@@ -346,18 +359,32 @@ void scheduler_impl::wait_for_task_list( TaskList& tl ) {
 
 		// ----------| Invariant: There are Tasks in this Task List which have not yet completed
 
-		void* t = this->work_queue.priority_0.try_pop();
-
-		if ( nullptr == t ) {
-			t = task_queue.try_pop();
-		}
-
-		// --------| Invariant: All worker threads are busy - or there are no worker threads: we must execute on this thread
+		void* t = this->workload.priority_0.try_pop();
 
 		if ( t ) {
-			coroutine_handle_t c     = coroutine_handle_t::from_address( t );
-			c.promise().p_work_queue = &this->work_queue;
-			c();
+			coroutine_handle_t::from_address( t ).resume(); // resume coroutine
+			// signal that we are ready to receive new tasks
+			t = nullptr;
+		}
+
+		// try pulling in a batch of new work from the scheduler
+		for ( int i = 0; i != WORKER_EAGERNESS; i++ ) {
+			t = this->task_queue.try_pop();
+			if ( t == nullptr ) {
+				// no more work in this scheduler.
+				if ( 0 == this->workload.priority_0.size() ) {
+
+					// if there are no tasks left on neither the channel nor the scheduler,
+					// then we should probably sleep this worker.
+
+					// ch->flag.wait( false ); // wait until flag set
+				}
+				break;
+			} else {
+				// tag the task so that it belongs to the current channel
+				coroutine_handle_t::from_address( t ).promise().p_work_queue = &this->workload;
+				this->workload.priority_0.push( t );
+			}
 		}
 	}
 
