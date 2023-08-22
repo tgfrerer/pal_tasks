@@ -6,6 +6,7 @@ struct TaskPromise; // ffdecl.
 class scheduler_impl; // ffdecl, pimpl
 class task_list_o;    // ffdecl
 class TaskList;       // ffdecl
+struct work_queue_t;  // ffdecl
 
 struct Task : std::coroutine_handle<TaskPromise> {
 	using promise_type = ::TaskPromise;
@@ -108,5 +109,6 @@ struct TaskPromise {
 #else
 	scheduler_impl* scheduler   = nullptr; // weak: owned by scheduler
 	task_list_o*    p_task_list = nullptr; // weak: owned by scheduler
+	work_queue_t*   p_work_queue = nullptr; // weak: owned by worker thread
 #endif
 };

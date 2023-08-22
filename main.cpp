@@ -62,7 +62,7 @@ int main( int argc, char** argv ) {
 		};
 
 		// add many more tasks
-		for ( int i = 0; i != 10; i++ ) {
+		for ( int i = 0; i != 2; i++ ) {
 			tasks.add_task( task_generator( scheduler, i ) );
 		}
 

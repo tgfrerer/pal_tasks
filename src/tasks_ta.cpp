@@ -9,7 +9,11 @@
 #include "sched.h"
 #include <mutex>
 
-using coroutine_handle_t = std::coroutine_handle<TaskPromise>;
+static constexpr auto WORKER_EAGERNESS = 2; // how many tasks to load into current worker on every
+using coroutine_handle_t               = std::coroutine_handle<TaskPromise>;
+struct work_queue_t {
+	lockfree_ring_buffer_t priority_0{ 4096 }; // workload for this worker at priority 0
+};
 
 /* *
  *
@@ -46,41 +50,22 @@ struct Channel {
 	// multiple threads may add to the channel, only one thread (the channel's thread itself)
 	// will ever remove from the channel - unless we allow for work-stealing.
 
-	void*            handle = nullptr; // storage for channel payload: one single handle. void means that the channel is free.
-	std::atomic_flag flag   = false;   // signal that the current channel is busy.
+	// std::atomic_flag flag = false; // signal that the current channel is busy.
 
-	bool try_push( coroutine_handle_t& h ) {
+	scheduler_impl* scheduler = nullptr;
 
-		if ( flag.test_and_set() ) {
-			// if the current channel was already flagged
-			// we cannot add anymore work.
-			return false;
-		}
-
-		// --------| invariant: current channel is available now
-
-		handle = h.address();
-
-		// If there is a thread blocked on this operation, we
-		// unblock it here.
-		flag.notify_all();
-
-		return true;
-	}
+	work_queue_t workload{ 4096 };
 
 	~Channel() {
-		// Once the channel accepts a coroutine handle, it becomes the
-		// owner of the handle. If there are any leftover valid handles
-		// that we own when this object dips into oblivion, we must clean
-		// them up first.
+		// if we own any leftover work items, we must destroy these here
 		//
-		if ( this->handle ) {
+		void* t = workload.priority_0.try_pop();
+		while ( t ) {
 			// std::cout << "WARNING: leftover task in channel." << std::endl;
-			// std::cout << "destroying task: " << this->handle << std::endl;
-			Task::from_address( this->handle ).destroy();
+			// std::cout << "destroying task: " << t << std::endl;
+			coroutine_handle_t::from_address( t ).destroy();
+			t = workload.priority_0.try_pop();
 		}
-
-		this->handle = nullptr;
 	}
 };
 
@@ -89,8 +74,6 @@ class task_list_o {
 	lockfree_ring_buffer_t tasks;
 
   public:
-	task_list_o* next;                         // intrusive list
-	task_list_o* prev;                         // intrusive list
 
 	task_list_o( uint32_t capacity_hint = 32 ) // start with capacity of 32
 	    : tasks( capacity_hint )
@@ -166,13 +149,8 @@ TaskList::~TaskList() {
 
 class scheduler_impl {
 
-	std::mutex   protect_task_list_list;
-	task_list_o* task_lists_front = nullptr; // linked list of tasks
-	task_list_o* task_lists_back  = nullptr; // last element in linked list of tasks
-
-	/// atomic operation
-	bool insert_task_list_at_end( task_list_o* tl );
-	bool remove_task_list( task_list_o* tl );
+	lockfree_ring_buffer_t task_queue{ 4096 }; // space for 4096 tasks
+	work_queue_t           work_queue;         // work queue for workloads executed on the same thread as the scheduler
 
   public:
 	std::vector<Channel*>     channels; // non-owning - channels are owned by their threads
@@ -196,13 +174,13 @@ class scheduler_impl {
 		// threads so nudged now wake up and get a chance to see that they have been
 		// stopped and will exit their inner loop gracefully.
 		//
-		for ( auto* c : channels ) {
-			if ( c ) {
-				c->flag.test_and_set(); // Set flag so that if there is a worker blocked on this flag, it may proceed.
-				c->flag.notify_all();   // Notify the worker thread (if any worker thread is waiting) that the flag has flipped.
-				                        // without notify, waiters will not be notified that the flag has flipped.
-			}
-		}
+		// for ( auto* c : channels ) {
+		//	if ( c ) {
+		//		c->flag.test_and_set(); // Set flag so that if there is a worker blocked on this flag, it may proceed.
+		//		c->flag.notify_all();   // Notify the worker thread (if any worker thread is waiting) that the flag has flipped.
+		//		                        // without notify, waiters will not be notified that the flag has flipped.
+		//	}
+		//}
 
 		// We must wait until all the threads have been joined.
 		// Deleting a jthread object implicitly stops (sets the stop_token) and joins.
@@ -212,78 +190,11 @@ class scheduler_impl {
 	// Execute all tasks in the task list, then invalidate the task list object
 	void wait_for_task_list( TaskList& p_t );
 
-	// Execute all tasks in the task list, then invalidate the task list object.
-	// This version of the function returns an awaitable.
-	// await_tasks wait_for_task_list_inner( TaskList& p_t );
+	// gets all tasks from a task list and appends them to this scheduler's task queue
+	bool add_tasks( task_list_o* task_list );
 
 	friend struct await_tasks;
 };
-
-// we want one channel per thread -
-// and we want to have one queue per thread. each task that gets suspended suspends to the queue of the thread on which it
-// is currently executing, so that it will be resumed on the same thread as the thread on which it was suspended.
-// we do this so that we can maintain thread-affinity, and don't have to move memory with tasks from thread to thread;
-
-bool scheduler_impl::insert_task_list_at_end( task_list_o* tl ) {
-	std::scoped_lock lock( this->protect_task_list_list );
-
-	if ( task_lists_front == nullptr && task_lists_back == nullptr ) {
-		// inserting first element
-		task_lists_front = task_lists_back = tl;
-		tl->prev                           = nullptr;
-		tl->next                           = nullptr;
-		return true;
-	} else {
-		tl->prev        = task_lists_back;
-		tl->prev->next  = tl;
-		task_lists_back = tl;
-		tl->next        = nullptr;
-		return true;
-	}
-}
-
-// removes a task_list_o from linked list of task lists owned by the scheduler,
-// if it can be found.
-// you still have to deallocate the object in question.
-bool scheduler_impl::remove_task_list( task_list_o* tl ) {
-	std::scoped_lock lock( this->protect_task_list_list );
-
-	// 1 find element which matches tl
-	// if found, remove element.
-	task_list_o* el = task_lists_front;
-
-	while ( el ) {
-		if ( el == tl ) {
-			break;
-		}
-		el = el->next;
-	}
-
-	if ( el ) {
-
-		// --------- | Invariant: we have found the element in question
-
-		if ( el->prev ) {
-			el->prev->next = el->next;
-		} else {
-			// we are deleting the first element
-			task_lists_front = el->next;
-		}
-
-		if ( el->next ) {
-			el->next->prev = el->prev;
-		} else {
-			// we are deleting the last element
-			task_lists_back = el->prev;
-		}
-
-		return true;
-
-	} else {
-		// we have not found the element in question
-		return false;
-	}
-}
 
 scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 
@@ -307,13 +218,14 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 	cpu_set_t cpuset;
 	for ( int i = 0; i != num_worker_threads; i++ ) {
 		channels.emplace_back( new Channel() );
+		channels.back()->scheduler = this;
 		threads.emplace_back(
 		    //
 		    // Thread worker implementation
 		    //
 		    []( std::stop_token stop_token, Channel* ch ) {
 			    // sleep until flag gets set
-			    ch->flag.wait( false );
+			    // ch->flag.wait( false );
 
 			    // std::cout << "New worker thread on CPU " << sched_getcpu()
 			    //           << std::endl;
@@ -322,12 +234,38 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 				    //				    std::cout << "Executing on cpu: " << sched_getcpu()
 				    //				              << std::endl;
 
-				    if ( ch->handle ) {
-					    coroutine_handle_t::from_address( ch->handle ).resume(); // resume coroutine
-					    ch->handle = nullptr;
+				    // first, see if we have any leftover work in our workload
+				    // if so, this needs to be resumed.
+
+				    // otherwise, we fetch new work from the scheduler
+
+				    void* t = ch->workload.priority_0.try_pop();
+
+				    if ( t ) {
+					    coroutine_handle_t::from_address( t ).resume(); // resume coroutine
 					    // signal that we are ready to receive new tasks
-					    ch->flag.clear( std::memory_order::release );
-					    continue;
+					    t = nullptr;
+					    // ch->flag.clear( std::memory_order::release );
+				    }
+
+				    // try pulling in a batch of new work from the scheduler
+				    for ( int i = 0; i != WORKER_EAGERNESS; i++ ) {
+					    t = ch->scheduler->task_queue.try_pop();
+					    if ( t == nullptr ) {
+						    // no more work in this scheduler.
+						    if ( 0 == ch->workload.priority_0.size() ) {
+
+							    // if there are no tasks left on neither the channel nor the scheduler,
+							    // then we should probably sleep this worker.
+
+							    // ch->flag.wait( false ); // wait until flag set
+						    }
+						    break;
+					    } else {
+						    // tag the task so that it belongs to the current channel
+						    coroutine_handle_t::from_address( t ).promise().p_work_queue = &ch->workload;
+						    ch->workload.priority_0.push( t );
+					    }
 				    }
 
 				    // Sleep until flag gets set
@@ -335,7 +273,7 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 				    // The flag is set on any of the following:
 				    //   * A new job has been placed in the channel
 				    // 	 * The current task list is empty.
-				    ch->flag.wait( false, std::memory_order::acquire );
+				    // ch->flag.wait( false, std::memory_order::acquire );
 			    }
 
 			    // Channel is owned by the thread - when the thread falls out of scope
@@ -350,11 +288,6 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 	}
 }
 
-// ----------------------------------------------------------------------
-
-void await_tasks::await_suspend( std::coroutine_handle<TaskPromise> h ) noexcept {
-	// not implemented yet
-}
 // ----------------------------------------------------------------------
 
 void scheduler_impl::wait_for_task_list( TaskList& tl ) {
@@ -398,7 +331,11 @@ void scheduler_impl::wait_for_task_list( TaskList& tl ) {
 
 	// add current task list to the list of task lists that
 	// are owned by this scheduler.
-	this->insert_task_list_at_end( task_list );
+	while ( false == this->add_tasks( task_list ) ) {
+		// retry adding tasks if we couldn't - this is most likely because
+		// the scheduler buffer was full.
+		std::this_thread::sleep_for( std::chrono::nanoseconds( 100 ) );
+	};
 
 	// TODO: put this taks list onto the list of task lists that this scheduler
 	// keeps as sources for tasks
@@ -409,19 +346,41 @@ void scheduler_impl::wait_for_task_list( TaskList& tl ) {
 
 		// ----------| Invariant: There are Tasks in this Task List which have not yet completed
 
-		// TODO: consume all tasks into a queue of tasks that this scheduler must process.
+		void* t = this->work_queue.priority_0.try_pop();
 
-		coroutine_handle_t t = task_list->pop_task();
+		if ( nullptr == t ) {
+			t = task_queue.try_pop();
+		}
 
 		// --------| Invariant: All worker threads are busy - or there are no worker threads: we must execute on this thread
+
 		if ( t ) {
-			t();
+			coroutine_handle_t c     = coroutine_handle_t::from_address( t );
+			c.promise().p_work_queue = &this->work_queue;
+			c();
 		}
 	}
 
-	this->remove_task_list( task_list );
 	// Once all tasks have been complete, release task list
 	delete task_list;
+}
+
+// ----------------------------------------------------------------------
+
+bool scheduler_impl::add_tasks( task_list_o* task_list ) {
+	coroutine_handle_t t            = task_list->pop_task();
+	while ( t ) {
+		if ( this->task_queue.try_push( t.address() ) ) {
+			t = task_list->pop_task();
+		} else {
+			// could not push t onto task queue - we must place it back onto
+			// the queue where it came from so that someone else can pick it
+			// up later.
+			task_list->push_task( t );
+			return false;
+		}
+	}
+	return true;
 }
 
 // ----------------------------------------------------------------------
@@ -442,7 +401,11 @@ Scheduler* Scheduler::create( int32_t num_worker_threads ) {
 Scheduler::~Scheduler() {
 	delete p_impl;
 }
+// ----------------------------------------------------------------------
 
+void await_tasks::await_suspend( std::coroutine_handle<TaskPromise> h ) noexcept {
+	// not implemented yet
+}
 // ----------------------------------------------------------------------
 
 void suspend_task::await_suspend( std::coroutine_handle<TaskPromise> h ) noexcept {
@@ -452,32 +415,8 @@ void suspend_task::await_suspend( std::coroutine_handle<TaskPromise> h ) noexcep
 
 	auto& promise = h.promise();
 
-	task_list_o* task_list = promise.p_task_list;
-
-	// Put the current coroutine to the back of the scheduler queue
-	// as it has been fully suspended at this point.
-
-	task_list->push_task( promise.get_return_object() );
-
-	{
-		// --- Eager Workers ---
-		//
-		// Eagerly try to fetch & execute the next task from the front of the
-		// scheduler queue -
-		// We do this so that multiple threads can share the
-		// scheduling workload.
-		//
-		// But we can also disable that, so that there is only one thread
-		// that does the scheduling, and removing elements from the
-		// queue.
-
-		coroutine_handle_t c = task_list->pop_task();
-
-		if ( c ) {
-			assert( !c.done() && "task must not be done" );
-			c();
-		}
-	}
+	// push the task back onto the queue where it came from.
+	promise.p_work_queue->priority_0.push( h.address() );
 
 	// Note: Once we drop off here, control will return to where the resume()
 	// command that brought us here was issued.
