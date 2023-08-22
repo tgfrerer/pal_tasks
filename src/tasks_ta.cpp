@@ -347,6 +347,7 @@ void scheduler_impl::wait_for_task_list( TaskList& tl ) {
 	while ( false == this->add_tasks( task_list ) ) {
 		// retry adding tasks if we couldn't - this is most likely because
 		// the scheduler buffer was full.
+		std::cout << "CAN'T ADD MORE TASKS" << std::endl;
 		std::this_thread::sleep_for( std::chrono::nanoseconds( 100 ) );
 	};
 
