@@ -9,7 +9,7 @@
 #include "sched.h"
 #include <mutex>
 
-static constexpr auto WORKER_EAGERNESS = 4; // how many tasks to load into current worker on every
+static constexpr auto WORKER_EAGERNESS = 2; // how many tasks to try to load into current worker on every iteration
 
 using coroutine_handle_t = std::coroutine_handle<TaskPromise>;
 struct work_queue_t {
