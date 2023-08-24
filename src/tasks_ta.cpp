@@ -215,6 +215,8 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 	channels.reserve( num_worker_threads );
 	threads.reserve( num_worker_threads );
 
+	static std::mutex debug_print_mutex;
+
 	// NOTE THAT BY DEFAULT WE DON'T HAVE ANY WORKER THREADS
 	//
 	cpu_set_t cpuset;
@@ -227,28 +229,19 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 		    //
 		    []( std::stop_token stop_token, Channel* ch ) {
 			    // sleep until flag gets set
-			    // ch->flag.wait( false );
+			    ch->flag.wait( false );
 
-			    std::cout << "New worker thread on CPU " << sched_getcpu()
-			              << std::endl;
+			    if ( 1 ) {
+				    auto lock = std::scoped_lock( debug_print_mutex );
+				    std::cout << "New worker thread on CPU " << sched_getcpu()
+				              << std::endl;
+			    }
 
 			    while ( !stop_token.stop_requested() ) {
-				    //				    std::cout << "Executing on cpu: " << sched_getcpu()
-				    //				              << std::endl;
+				    // std::cout << "Executing on cpu: " << sched_getcpu()
+				    //           << std::endl;
 
-				    // first, see if we have any leftover work in our workload
-				    // if so, this needs to be resumed.
-
-				    // otherwise, we fetch new work from the scheduler
-
-				    void* t = ch->workload.priority_0.try_pop();
-
-				    if ( t ) {
-					    coroutine_handle_t::from_address( t ).resume(); // resume coroutine
-					    // signal that we are ready to receive new tasks
-					    t = nullptr;
-					    // ch->flag.clear( std::memory_order::release );
-				    }
+				    void* t = nullptr;
 
 				    // try pulling in a batch of new work from the scheduler
 				    for ( int i = 0; i != WORKER_EAGERNESS; i++ ) {
@@ -270,6 +263,15 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 					    }
 				    }
 
+				    t = ch->workload.priority_0.try_pop();
+
+				    if ( t ) {
+					    coroutine_handle_t::from_address( t ).resume(); // resume coroutine
+					    // signal that we are ready to receive new tasks
+					    t = nullptr;
+					    // ch->flag.clear( std::memory_order::release );
+				    }
+
 				    // Sleep until flag gets set
 				    //
 				    // The flag is set on any of the following:
@@ -284,8 +286,10 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 		    },
 		    channels.back() );
 
+		uint32_t hardware_concurrency = std::jthread::hardware_concurrency();
 		CPU_ZERO( &cpuset );
-		CPU_SET( i + 2, &cpuset );
+		CPU_SET( i % hardware_concurrency, &cpuset );
+		// CPU_SET( i, &cpuset );
 		bool err = pthread_setaffinity_np( threads.back().native_handle(), sizeof( cpuset ), &cpuset );
 		assert( err == 0 && "SetAffinity did not work." );
 	}
