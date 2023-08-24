@@ -222,7 +222,7 @@ Vec3f trace(
 //[/comment]
 void render( int num_threads, const char* choice, const std::vector<Sphere>& spheres ) {
 
-	static const unsigned width    = 1920;
+	static const unsigned width    = 1920 * 2;
 	static const unsigned height   = 768 * 2;
 	Vec3f*                image    = new Vec3f[ width * height ];
 	static const float    invWidth = 1 / float( width ), invHeight = 1 / float( height );
