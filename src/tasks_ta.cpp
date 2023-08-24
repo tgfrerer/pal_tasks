@@ -11,8 +11,59 @@
 
 static constexpr auto WORKER_EAGERNESS = 2; // how many tasks to try to load into current worker on every iteration
 
+// non-thread-safe implementation of ring buffer - use this if you know for sure that only one thread
+// will ever access this data.
+class ring_buffer_t {
+	// high and low are generally used together; no point putting them on separate cache lines
+	uint32_t           m_high;
+	uint32_t           m_low;
+	uint32_t           m_capacity;
+	uint32_t           m_power_of_2_mod;
+	std::vector<void*> buffer;
+
+	ring_buffer_t( const ring_buffer_t& )            = delete;
+	ring_buffer_t( ring_buffer_t&& )                 = delete;
+	ring_buffer_t& operator=( const ring_buffer_t& ) = delete;
+	ring_buffer_t& operator=( ring_buffer_t&& )      = delete;
+
+  public:
+	ring_buffer_t( uint32_t power_of_2_size )
+	    : m_capacity( next_power_of_2( power_of_2_size ) )
+	    , m_power_of_2_mod( m_capacity - 1 )
+	    , buffer( m_capacity, nullptr ) {
+		assert( power_of_2_size );
+	}
+	size_t size() {
+		const int64_t size = m_high - m_low;
+		return size >= 0 ? size : 0;
+	}
+
+	void push( void* in ) {
+		assert( in ); // can't store NULLs; we rely on a NULL to indicate a spot in the buffer has not been written yet
+		// read low first; this means the buffer will appear larger or equal to its actual size
+		const uint32_t index = m_high & this->m_power_of_2_mod;
+		if ( !this->buffer[ index ] && m_high - m_low < this->m_capacity ) {
+			this->buffer[ index ] = in;
+			this->m_high++;
+		}
+	}
+
+	void* try_pop() {
+		// read high first; this means the buffer will appear smaller or equal to its actual size
+		const uint64_t index = m_low & this->m_power_of_2_mod;
+		void* const    ret   = this->buffer[ index ];
+		if ( ret && m_high > m_low ) {
+			this->buffer[ index ] = nullptr;
+			m_low++;
+			return ret;
+		}
+		return nullptr;
+	}
+};
+
 using coroutine_handle_t = std::coroutine_handle<TaskPromise>;
 struct work_queue_t {
+	// wow! if there is only one thread accessing this structure, it is almost free.
 	lockfree_ring_buffer_t priority_0{ 4096 }; // workload for this worker at priority 0
 };
 
@@ -55,7 +106,7 @@ struct Channel {
 
 	scheduler_impl* scheduler = nullptr;
 
-	work_queue_t workload{ 4096 };
+	work_queue_t workload;
 
 	~Channel() {
 		// if we own any leftover work items, we must destroy these here
