@@ -36,13 +36,14 @@ int main( int argc, char** argv ) {
                 TaskList inner_list;
 
                 inner_list.add_task( []() -> Task {
-                    std::cout << "inside inner task (tid:" << std::hex << std::this_thread::get_id() << ") " << std::endl;
+                    std::cout << "inside         inner task (tid:" << std::hex << std::this_thread::get_id() << ") " << std::endl;
                     co_return;
                 }() );
                 inner_list.add_task( []() -> Task {
-                    std::cout << "inside another inner task tid:" << std::hex << std::this_thread::get_id() << ") " << std::endl;
+                    std::cout << "inside another inner task (tid:" << std::hex << std::this_thread::get_id() << ") " << std::endl;
                     co_return;
                 }() );
+                co_await suspend_task();
 
                 if ( true ) {
                     scheduler->wait_for_task_list( inner_list );
@@ -51,7 +52,6 @@ int main( int argc, char** argv ) {
                 }
 
                 // put this coroutine back on the scheduler
-                co_await suspend_task();
             }
             std::cout << "resuming primary task " << i << " (tid:" << std::hex << std::this_thread::get_id() << ") " << std::endl;
 
