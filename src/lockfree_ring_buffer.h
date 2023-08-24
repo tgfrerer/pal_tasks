@@ -64,22 +64,22 @@ class lockfree_ring_buffer_t {
 	}
 	size_t size() {
 		// read high first; make it look less than or equal to its actual size
-		const uint64_t high = this->m_high.load( std::memory_order_acquire );
+		const uint64_t high = this->m_high.load();
 		// load_load_barrier();
-		const int64_t size = high - this->m_low.load( std::memory_order_acquire );
+		const int64_t size = high - this->m_low.load();
 		return size >= 0 ? size : 0;
 	}
 
 	int try_push( void* in ) {
 		assert( in ); // can't store NULLs; we rely on a NULL to indicate a spot in the buffer has not been written yet
 		// read low first; this means the buffer will appear larger or equal to its actual size
-		const uint64_t low = this->m_low.load( std::memory_order_acquire );
+		const uint64_t low = this->m_low.load();
 		// load_load_barrier();
-		uint64_t       high  = this->m_high.load( std::memory_order_acquire );
+		uint64_t       high  = this->m_high.load();
 		const uint64_t index = high & this->m_power_of_2_mod;
 		if ( !this->buffer[ index ] &&
 		     high - low < this->m_capacity &&
-		     this->m_high.compare_exchange_weak( high, high + 1, std::memory_order_release ) ) {
+		     this->m_high.compare_exchange_weak( high, high + 1 ) ) {
 			this->buffer[ index ] = in;
 			return 1;
 		}
@@ -97,14 +97,14 @@ class lockfree_ring_buffer_t {
 
 	void* try_pop() {
 		// read high first; this means the buffer will appear smaller or equal to its actual size
-		const uint64_t high = this->m_high.load( std::memory_order_acquire );
+		const uint64_t high = this->m_high.load();
 		// load_load_barrier();
-		uint64_t       low   = this->m_low.load( std::memory_order_acquire );
+		uint64_t       low   = this->m_low.load();
 		const uint64_t index = low & this->m_power_of_2_mod;
 		void* const    ret   = this->buffer[ index ];
 		if ( ret &&
 		     high > low &&
-		     this->m_low.compare_exchange_weak( low, low + 1, std::memory_order_release ) ) {
+		     this->m_low.compare_exchange_weak( low, low + 1 ) ) {
 			this->buffer[ index ] = nullptr;
 			return ret;
 		}
