@@ -168,14 +168,6 @@ class scheduler_impl {
 		// so that they get a chance to notice that they have been stopped - otherwise
 		// they will wait to infinity.
 
-		for ( auto& t : threads ) {
-			t.request_stop();
-		}
-
-		// Nudge sleeping threads by flipping the wait flag explicitly - any sleeping
-		// threads so nudged now wake up and get a chance to see that they have been
-		// stopped and will exit their inner loop gracefully.
-		//
 		for ( auto* c : channels ) {
 			if ( c ) {
 				c->flag.test_and_set(); // Set flag so that if there is a worker blocked on this flag, it may proceed.
@@ -183,6 +175,11 @@ class scheduler_impl {
 				                        // without notify, waiters will not be notified that the flag has flipped.
 			}
 		}
+
+		for ( auto& t : threads ) {
+			t.request_stop();
+		}
+
 
 		// We must wait until all the threads have been joined.
 		// Deleting a jthread object implicitly stops (sets the stop_token) and joins.
