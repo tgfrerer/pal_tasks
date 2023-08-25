@@ -9,7 +9,7 @@
 #include "sched.h"
 #include <mutex>
 
-static constexpr auto WORKER_EAGERNESS = 2; // how many tasks to try to load into current worker on every iteration
+static constexpr auto WORKER_EAGERNESS = 1; // how many tasks to try to load into current worker on every iteration
 
 // non-thread-safe implementation of ring buffer - use this if you know for sure that only one thread
 // will ever access this data.
@@ -69,30 +69,8 @@ struct work_queue_t {
 
 /* *
  *
- *
- * How do we want this to work?
- *
- * currently, tasklist is the main element that owns our tasks.
- * we need to move all tasks to channels, and it is the channel
- * that then needs to make sure that tasks get completed.
- *
- * Each channel needs a queue for tasks, and new work needs to
- * be added to the queue for each task. we should probably have
- * some sort of priority system.
- *
- * we need to make sure that channels can't deadlock each other.
- * How could a deadlock happen?
- *
- *
- *
- *
- *
  * */
 
-// each worker thread has exactly one channel. Once a channel contains
-// a payload it is blocked (you cannot push anymore handles onto this channel).
-// The channel gets free and ready to receive another handle as soon as the
-// worker thread has finished processing the current handle.
 struct Channel {
 
 	// we want to be able to add to the current channel whenever we want
@@ -102,20 +80,16 @@ struct Channel {
 	// multiple threads may add to the channel, only one thread (the channel's thread itself)
 	// will ever remove from the channel - unless we allow for work-stealing.
 
-	std::atomic_flag flag = false; // signal that the current channel is busy.
-
-	scheduler_impl* scheduler = nullptr;
-
-	work_queue_t workload;
+	std::atomic_flag flag      = false; // signal that the current channel is busy.
+	scheduler_impl*  scheduler = nullptr;
+	work_queue_t     workload{};
 
 	~Channel() {
 		// if we own any leftover work items, we must destroy these here
 		//
 		void* t = workload.priority_0.try_pop();
 		while ( t ) {
-			// std::cout << "WARNING: leftover task in channel." << std::endl;
-			// std::cout << "destroying task: " << t << std::endl;
-			assert( false );
+			assert( false && "Leftover tasks in channel - this should not happen" );
 			coroutine_handle_t::from_address( t ).destroy();
 			t = workload.priority_0.try_pop();
 		}
@@ -123,12 +97,9 @@ struct Channel {
 };
 
 class task_list_o {
-	alignas( 64 ) std::atomic_size_t task_count;                        // number of tasks, only gets decremented if task has been removed
-	alignas( 64 ) std::atomic_int32_t protect_decrement_task_count = 0; // protect get_task_count from returning 0 while resume might potentially be in progress.
-
-	lockfree_ring_buffer_t tasks;
-
-	coroutine_handle_t waiting_task; // if this task list is waited upon, this will be the task to resume once all tasks have completed
+	alignas( 64 ) std::atomic_size_t task_count; // Number of tasks, only gets decremented if task has been completed
+	lockfree_ring_buffer_t tasks;                //
+	coroutine_handle_t     waiting_task;         // If this task list is waited upon, this will be the task to resume once all tasks have completed
   public:
 
 	task_list_o( uint32_t capacity_hint = 32 ) // start with capacity of 32
@@ -174,20 +145,34 @@ class task_list_o {
 	}
 
 	inline size_t get_task_count() {
-		return task_count + protect_decrement_task_count;
+		return task_count;
 	}
 
 	void decrement_task_count() {
-		protect_decrement_task_count++;
-		if ( 0 == --task_count && waiting_task ) {
-			// resumes scheduler that was awaiting tasks
-			waiting_task.resume();
-			// this may destroy the coroutine that holds us because control may exit the context
-			// where this tasklist was allocated from - in this case we must not access
-			// `this` in any way.
+		//
+		// ACHTUNG: From the moment on that task_count goes to zero
+		// you must, like any most pessimistic soul, assume that *this*
+		// object has been deleted by another thread, eager to clean up.
+		// From that moment on therefore any reference to `this` is a
+		// potential use-after-free...
+		//
+		// What's still guaranteed to be around, however, is our stack frame,
+		// and this is why we capture a local copy of `waiting_task` before
+		// we potentially decrement `task_count`.
+		//
+		//
+		//
+		// you cannot assume that the object is still alive here.
+		coroutine_handle_t waiting_task_local = this->waiting_task;
+
+		if ( 0 == --task_count && waiting_task_local ) {
+			// resume the scope that was waiting on this task list -
+			// potentially deleting *this* - you must not access `this`
+			// anymore after `resume`!
+			waiting_task_local.resume();
 			return;
 		}
-		protect_decrement_task_count--;
+		// *** DO NOT ACCESS `this` anymore here as it may have been deleted. ***
 	}
 
 	friend struct await_tasks;
@@ -292,7 +277,9 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 		    // Thread worker implementation
 		    //
 		    []( std::stop_token stop_token, Channel* ch ) {
-			    // sleep until flag gets set
+			    // Sleep until flag gets set - we sleep so that
+			    // there is an opportunity for the scheduler to
+			    // apply thread cpu affinity.
 			    ch->flag.wait( false );
 
 			    if ( 1 ) {
@@ -313,11 +300,8 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 					    if ( t == nullptr ) {
 						    // no more work in this scheduler.
 						    if ( 0 == ch->workload.priority_0.size() ) {
-
 							    // if there are no tasks left on neither the channel nor the scheduler,
 							    // then we should probably sleep this worker.
-
-							    // ch->flag.wait( false ); // wait until flag set
 						    }
 						    break;
 					    } else {
@@ -331,17 +315,8 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 
 				    if ( t ) {
 					    coroutine_handle_t::from_address( t ).resume(); // resume coroutine
-					    // signal that we are ready to receive new tasks
-					    t = nullptr;
-					    // ch->flag.clear( std::memory_order::release );
 				    }
 
-				    // Sleep until flag gets set
-				    //
-				    // The flag is set on any of the following:
-				    //   * A new job has been placed in the channel
-				    // 	 * The current task list is empty.
-				    // ch->flag.wait( false, std::memory_order::acquire );
 			    }
 
 			    // Channel is owned by the thread - when the thread falls out of scope
@@ -387,40 +362,15 @@ void scheduler_impl::wait_for_task_list( TaskList& tl ) {
 	// by tagging them so that they know which scheduler they belong to.
 	task_list->tag_all_tasks_with_scheduler( this );
 
-	// the scheduler needs a large queue onto which we can place our workloads -
-	// we don't have something like this right now.
+	// Add current task list to the list of task lists that are owned by this scheduler.
 
-	/**
-	 *
-	 * What would the scheduler queue need to do for us? atomic insertion and deletion
-	 *
-	 * FIFO - things need to be consumed first in first out
-	 *
-	 * We would need this to be a queue and it would need to be able to re-allocate
-	 *
-	 * Channels pull from this queue, channels don't push onto this queue.
-	 * only schedulers push onto this queue.
-	 *
-	 * we can use the TaskList as the source of tasks - they stay in there until pulled
-	 * into channels / workers. How do we know that a channel still has some elements that
-	 * can be pulled?
-	 *
-	 * We can keep a linked list of channels in the scheduler - the scheduler owns all task lists
-	 * that are held by the linked list.
-
-	 */
-
-	// add current task list to the list of task lists that
-	// are owned by this scheduler.
 	while ( false == this->add_tasks( task_list ) ) {
-		// retry adding tasks if we couldn't - this is most likely because
+
+		// Retry adding tasks if we couldn't - this is most likely because
 		// the scheduler buffer was full.
 		std::cout << "CAN'T ADD MORE TASKS" << std::endl;
 		std::this_thread::sleep_for( std::chrono::nanoseconds( 100 ) );
 	};
-
-	// TODO: put this taks list onto the list of task lists that this scheduler
-	// keeps as sources for tasks
 
 	// Distribute work, as long as there is work to distribute
 
@@ -436,7 +386,7 @@ void scheduler_impl::wait_for_task_list( TaskList& tl ) {
 			t = nullptr;
 		}
 
-		// try pulling in a batch of new work from the scheduler
+		// Try pulling in a batch of new work from the scheduler
 		for ( int i = 0; i != WORKER_EAGERNESS; i++ ) {
 			t = this->task_queue.try_pop();
 			if ( t == nullptr ) {
