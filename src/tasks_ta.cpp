@@ -123,9 +123,12 @@ struct Channel {
 };
 
 class task_list_o {
-	alignas( 64 ) std::atomic_size_t task_count;                // number of tasks, only gets decremented if task has been removed
+	alignas( 64 ) std::atomic_size_t task_count;                        // number of tasks, only gets decremented if task has been removed
+	alignas( 64 ) std::atomic_int32_t protect_decrement_task_count = 0; // protect get_task_count from returning 0 while resume might potentially be in progress.
+
 	lockfree_ring_buffer_t tasks;
 
+	coroutine_handle_t waiting_task; // if this task list is waited upon, this will be the task to resume once all tasks have completed
   public:
 
 	task_list_o( uint32_t capacity_hint = 32 ) // start with capacity of 32
@@ -171,11 +174,20 @@ class task_list_o {
 	}
 
 	inline size_t get_task_count() {
-		return task_count;
+		return task_count + protect_decrement_task_count;
 	}
 
 	void decrement_task_count() {
-		--task_count;
+		protect_decrement_task_count++;
+		if ( 0 == --task_count && waiting_task ) {
+			// resumes scheduler that was awaiting tasks
+			waiting_task.resume();
+			// this may destroy the coroutine that holds us because control may exit the context
+			// where this tasklist was allocated from - in this case we must not access
+			// `this` in any way.
+			return;
+		}
+		protect_decrement_task_count--;
 	}
 
 	friend struct await_tasks;
@@ -239,6 +251,10 @@ class scheduler_impl {
 
 	// Execute all tasks in the task list, then invalidate the task list object
 	void wait_for_task_list( TaskList& p_t );
+
+	// Execute all tasks in the task list, then invalidate the task list object.
+	// This version of the function returns an awaitable.
+	await_tasks wait_for_task_list_inner( TaskList& p_t );
 
 	// gets all tasks from a task list and appends them to this scheduler's task queue
 	bool add_tasks( task_list_o* task_list );
@@ -444,6 +460,57 @@ void scheduler_impl::wait_for_task_list( TaskList& tl ) {
 
 // ----------------------------------------------------------------------
 
+await_tasks scheduler_impl::wait_for_task_list_inner( TaskList& tl ) {
+	if ( nullptr == tl.p_impl ) {
+		assert( false && "Task list must have been freshly initialised. Has this task list been waited for already?" );
+		return {};
+	}
+	// --------| Invariant: TaskList is valid
+
+	// Tag all tasks with their scheduler,
+	// so that they know where they belong to
+	tl.p_impl->tag_all_tasks_with_scheduler( this );
+
+	// create an awaitable that can own a tasklist
+
+	await_tasks result;
+	result.p_task_list = tl.p_impl;
+
+	// await_tasks::await_suspend is where control will go next.
+	return result;
+}
+// ----------------------------------------------------------------------
+
+void await_tasks::await_suspend( std::coroutine_handle<TaskPromise> h ) noexcept {
+	// The task that waits on a task list is now fully suspended.
+
+	// who will wake it up?
+	// it gets resumed once the last element in its tasklist has completed.
+
+	task_list_o* p_task_list = this->p_task_list;
+
+	if ( 0 == p_task_list->get_task_count() ) {
+		// If there are no tasks left in this task list, we can immediately resume
+		h.resume();
+	} else {
+
+		// Resume this coroutine once all tasks have completed.
+		// Note that the thread that picks up the continuation may not be the same as
+		// the thread that initiated the wait as whoever completes the last task of the
+		// task list will get to resume this coroutine.
+		p_task_list->waiting_task = h;
+
+		// If there are tasks, we move them to the scheduler.
+		while ( false == h.promise().scheduler->add_tasks( p_task_list ) ) {
+			// retry adding tasks if we couldn't - this is most likely because
+			// the scheduler buffer was full.
+			std::cout << "CAN'T ADD MORE TASKS" << std::endl;
+			std::this_thread::sleep_for( std::chrono::microseconds( 10 ) );
+		}
+	}
+}
+// ----------------------------------------------------------------------
+
 bool scheduler_impl::add_tasks( task_list_o* task_list ) {
 	coroutine_handle_t t            = task_list->pop_task();
 	while ( t ) {
@@ -470,6 +537,9 @@ void Scheduler::wait_for_task_list( TaskList& p_t ) {
 	p_impl->wait_for_task_list( p_t );
 }
 
+await_tasks Scheduler::wait_for_task_list_inner( TaskList& p_t ) {
+	return this->p_impl->wait_for_task_list_inner( p_t );
+}
 
 Scheduler* Scheduler::create( int32_t num_worker_threads ) {
 	return new Scheduler( num_worker_threads );
@@ -478,11 +548,7 @@ Scheduler* Scheduler::create( int32_t num_worker_threads ) {
 Scheduler::~Scheduler() {
 	delete p_impl;
 }
-// ----------------------------------------------------------------------
 
-void await_tasks::await_suspend( std::coroutine_handle<TaskPromise> h ) noexcept {
-	// not implemented yet
-}
 // ----------------------------------------------------------------------
 
 void suspend_task::await_suspend( std::coroutine_handle<TaskPromise> h ) noexcept {

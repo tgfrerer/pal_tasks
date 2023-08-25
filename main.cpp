@@ -8,7 +8,7 @@ int raytracer_main( int argc, char** argv ); // from raytracer.cpp
 
 int main( int argc, char** argv ) {
 
-	raytracer_main( argc, argv );
+	// raytracer_main( argc, argv );
 
 	// argument 0 is the path to the application
 	// argument 1 is the number of threads specified, if any
@@ -16,7 +16,7 @@ int main( int argc, char** argv ) {
 	const int   num_threads = argc >= 2 ? atoi( argv[ 1 ] ) : -1;
 	char const* choices     = argc >= 3 ? argv[ 2 ] : "001";
 
-	return 0;
+	// return 0;
 
 	// Create a scheduler with as many hardware threads as possible
 	//  0 ... No worker threads, just one main thread
@@ -33,37 +33,37 @@ int main( int argc, char** argv ) {
 		auto     task_generator = []( Scheduler* scheduler, int i ) -> Task {
             std::cout << "primary task " << i << " (tid:" << std::hex << std::this_thread::get_id() << ") " << std::endl;
             {
-                TaskList inner_list;
+				TaskList inner_list;
 
-                inner_list.add_task( []() -> Task {
-                    std::cout << "inside         inner task (tid:" << std::hex << std::this_thread::get_id() << ") " << std::endl;
-                    co_return;
-                }() );
-                inner_list.add_task( []() -> Task {
-                    std::cout << "inside another inner task (tid:" << std::hex << std::this_thread::get_id() << ") " << std::endl;
-                    co_return;
-                }() );
-                co_await suspend_task();
+				inner_list.add_task( []() -> Task {
+					std::cout << "inside         inner task (tid:" << std::hex << std::this_thread::get_id() << ") " << std::endl;
+					co_return;
+				}() );
+				inner_list.add_task( []() -> Task {
+					std::cout << "inside another inner task (tid:" << std::hex << std::this_thread::get_id() << ") " << std::endl;
+					co_return;
+				}() );
+				co_await suspend_task();
 
-                if ( true ) {
-                    scheduler->wait_for_task_list( inner_list );
-                } else {
-                    co_await scheduler->wait_for_task_list_inner( inner_list );
-                }
+				if ( false ) {
+					scheduler->wait_for_task_list( inner_list );
+				} else {
+					co_await scheduler->wait_for_task_list_inner( inner_list );
+				}
 
-                // put this coroutine back on the scheduler
-            }
-            std::cout << "resuming primary task " << i << " (tid:" << std::hex << std::this_thread::get_id() << ") " << std::endl;
+				// put this coroutine back on the scheduler
+			}
+			std::cout << "resuming primary task " << i << " (tid:" << std::hex << std::this_thread::get_id() << ") " << std::endl;
 
-            // we have resumed this coroutine from the scheduler
+			// we have resumed this coroutine from the scheduler
 
-            // complete work, signal to the compiler that this is a
+			// complete work, signal to the compiler that this is a
             // coroutine for political reasons.
             co_return;
 		};
 
 		// add many more tasks
-		for ( int i = 0; i != 10; i++ ) {
+		for ( int i = 0; i != 2; i++ ) {
 			tasks.add_task( task_generator( scheduler, i ) );
 		}
 
@@ -125,15 +125,15 @@ int main( int argc, char** argv ) {
             std::this_thread::sleep_for( std::chrono::microseconds( rand_r( &i ) % 55000 ) );
 
 			auto inner_coro_generator = []( uint i, int j ) -> Task {
-				//    std::cout << "\t executing inner coroutine: " << std::dec << i << ":" << j++ << " on thread: " << std::hex << std::this_thread::get_id() << std::endl
-				//              << std::flush;
+				// std::cout << "\t executing inner coroutine: " << std::dec << i << ":" << j++ << " on thread: " << std::hex << std::this_thread::get_id() << std::endl
+				//           << std::flush;
 
 				std::this_thread::sleep_for( std::chrono::microseconds( rand_r( &i ) % 40000 ) );
 				// this yields control back to the await_suspend method, and to our scheduler
 				co_await suspend_task();
 
 				std::this_thread::sleep_for( std::chrono::microseconds( rand_r( &i ) % 33000 ) );
-				//    std::cout << "\t executing inner coroutine: " << std::dec << i << ":" << j++ << " on thread: " << std::hex << std::this_thread::get_id() << std::endl;
+				// std::cout << "\t executing inner coroutine: " << std::dec << i << ":" << j++ << " on thread: " << std::hex << std::this_thread::get_id() << std::endl;
 				co_return;
 			};
 
@@ -153,8 +153,9 @@ int main( int argc, char** argv ) {
 
 			// ----------| invariant: we are back after resuming.
 
-			std::cout << "executing first level coroutine: " << std::dec << std::setw( 10 ) << i << " on thread: " << std::hex << std::this_thread::get_id() << std::endl;
-			if ( false ) {
+			std::cout << "executing first level coroutine: " << std::dec << std::setw( 10 ) << i << " on cpu: " << std::setw( 3 ) << std::dec << sched_getcpu() << std::endl;
+
+			if ( 1 ) {
 				// Execute, and wait for tasks that we spin out from this task
 				co_await sched->wait_for_task_list_inner( inner_task_list );
 			} else {
