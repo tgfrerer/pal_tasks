@@ -337,7 +337,7 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 		uint32_t hardware_concurrency = std::jthread::hardware_concurrency();
 		CPU_ZERO( &cpuset );
 		CPU_SET( i % hardware_concurrency, &cpuset );
-		// CPU_SET( i, &cpuset );
+		// this really makes a difference.
 		bool err = pthread_setaffinity_np( threads.back().native_handle(), sizeof( cpuset ), &cpuset );
 		assert( err == 0 && "SetAffinity did not work." );
 	}
