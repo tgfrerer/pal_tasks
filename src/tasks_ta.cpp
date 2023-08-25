@@ -200,7 +200,7 @@ TaskList::~TaskList() {
 class scheduler_impl {
 
 	lockfree_ring_buffer_t m_task_queue{ 4096 }; // space for 4096 tasks
-	work_queue_t           workload;           // work queue for workloads executed on the same thread as the scheduler
+	work_queue_t           m_workload;           // work queue for workloads executed on the same thread as the scheduler
 
   public:
 	std::vector<Channel*>     channels; // non-owning - channels are owned by their threads
@@ -244,8 +244,36 @@ class scheduler_impl {
 	// gets all tasks from a task list and appends them to this scheduler's task queue
 	bool add_tasks( task_list_o* task_list );
 
+	// Fetch next available task from the scheduler
+	void* get_next_task();
+
 	friend struct await_tasks;
 };
+
+// ----------------------------------------------------------------------
+
+bool scheduler_impl::add_tasks( task_list_o* task_list ) {
+	coroutine_handle_t t = task_list->pop_task();
+	while ( t ) {
+		if ( this->m_task_queue.try_push( t.address() ) ) {
+			t = task_list->pop_task();
+		} else {
+			// could not push t onto task queue - we must place it back onto
+			// the queue where it came from so that someone else can pick it
+			// up later.
+			task_list->push_task( t );
+			return false;
+		}
+	}
+	return true;
+}
+// ----------------------------------------------------------------------
+
+inline void* scheduler_impl::get_next_task() {
+	return m_task_queue.try_pop();
+}
+
+// ----------------------------------------------------------------------
 
 scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 
@@ -296,7 +324,7 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 
 				    // try pulling in a batch of new work from the scheduler
 				    for ( int i = 0; i != WORKER_EAGERNESS; i++ ) {
-					    t = ch->scheduler->m_task_queue.try_pop();
+					    t = ch->scheduler->get_next_task();
 					    if ( t == nullptr ) {
 						    // no more work in this scheduler.
 						    if ( 0 == ch->workload.priority_0.size() ) {
@@ -378,7 +406,7 @@ void scheduler_impl::wait_for_task_list( TaskList& tl ) {
 
 		// ----------| Invariant: There are Tasks in this Task List which have not yet completed
 
-		void* t = this->workload.priority_0.try_pop();
+		void* t = this->m_workload.priority_0.try_pop();
 
 		if ( t ) {
 			coroutine_handle_t::from_address( t ).resume(); // resume coroutine
@@ -388,24 +416,46 @@ void scheduler_impl::wait_for_task_list( TaskList& tl ) {
 
 		// Try pulling in a batch of new work from the scheduler
 		for ( int i = 0; i != WORKER_EAGERNESS; i++ ) {
-			t = this->m_task_queue.try_pop();
+
+			t = this->get_next_task();
+
 			if ( t == nullptr ) {
 				// no more work in this scheduler.
-				if ( 0 == this->workload.priority_0.size() ) {
+				if ( 0 == this->m_workload.priority_0.size() ) {
 					// if there are no tasks left on neither the channel nor the scheduler,
 					// then we should probably sleep this worker.
 				}
 				break;
 			} else {
 				// tag the task so that it belongs to the current channel
-				coroutine_handle_t::from_address( t ).promise().p_work_queue = &this->workload;
-				this->workload.priority_0.push( t );
+				coroutine_handle_t::from_address( t ).promise().p_work_queue = &this->m_workload;
+				this->m_workload.priority_0.push( t );
 			}
 		}
 	}
 
 	// Once all tasks have been complete, release task list
 	delete task_list;
+}
+
+void Scheduler::wait_for_task_list( TaskList& p_t ) {
+	p_impl->wait_for_task_list( p_t );
+}
+
+Scheduler::Scheduler( int32_t num_worker_threads )
+    : p_impl( new scheduler_impl( num_worker_threads ) ) {
+}
+
+Scheduler* Scheduler::create( int32_t num_worker_threads ) {
+	return new Scheduler( num_worker_threads );
+}
+
+Scheduler::~Scheduler() {
+	delete p_impl;
+}
+
+await_tasks Scheduler::wait_for_task_list_inner( TaskList& p_t ) {
+	return this->p_impl->wait_for_task_list_inner( p_t );
 }
 
 // ----------------------------------------------------------------------
@@ -445,9 +495,11 @@ void await_tasks::await_suspend( std::coroutine_handle<TaskPromise> h ) noexcept
 	} else {
 
 		// Resume this coroutine once all tasks have completed.
+		//
 		// Note that the thread that picks up the continuation may not be the same as
 		// the thread that initiated the wait as whoever completes the last task of the
 		// task list will get to resume this coroutine.
+		//
 		p_task_list->waiting_task = h;
 
 		// If there are tasks, we move them to the scheduler.
@@ -458,45 +510,6 @@ void await_tasks::await_suspend( std::coroutine_handle<TaskPromise> h ) noexcept
 			std::this_thread::sleep_for( std::chrono::microseconds( 10 ) );
 		}
 	}
-}
-// ----------------------------------------------------------------------
-
-bool scheduler_impl::add_tasks( task_list_o* task_list ) {
-	coroutine_handle_t t            = task_list->pop_task();
-	while ( t ) {
-		if ( this->m_task_queue.try_push( t.address() ) ) {
-			t = task_list->pop_task();
-		} else {
-			// could not push t onto task queue - we must place it back onto
-			// the queue where it came from so that someone else can pick it
-			// up later.
-			task_list->push_task( t );
-			return false;
-		}
-	}
-	return true;
-}
-
-// ----------------------------------------------------------------------
-
-Scheduler::Scheduler( int32_t num_worker_threads )
-    : p_impl( new scheduler_impl( num_worker_threads ) ) {
-}
-
-void Scheduler::wait_for_task_list( TaskList& p_t ) {
-	p_impl->wait_for_task_list( p_t );
-}
-
-await_tasks Scheduler::wait_for_task_list_inner( TaskList& p_t ) {
-	return this->p_impl->wait_for_task_list_inner( p_t );
-}
-
-Scheduler* Scheduler::create( int32_t num_worker_threads ) {
-	return new Scheduler( num_worker_threads );
-}
-
-Scheduler::~Scheduler() {
-	delete p_impl;
 }
 
 // ----------------------------------------------------------------------
