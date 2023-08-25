@@ -199,7 +199,7 @@ TaskList::~TaskList() {
 
 class scheduler_impl {
 
-	lockfree_ring_buffer_t task_queue{ 4096 }; // space for 4096 tasks
+	lockfree_ring_buffer_t m_task_queue{ 4096 }; // space for 4096 tasks
 	work_queue_t           workload;           // work queue for workloads executed on the same thread as the scheduler
 
   public:
@@ -296,7 +296,7 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 
 				    // try pulling in a batch of new work from the scheduler
 				    for ( int i = 0; i != WORKER_EAGERNESS; i++ ) {
-					    t = ch->scheduler->task_queue.try_pop();
+					    t = ch->scheduler->m_task_queue.try_pop();
 					    if ( t == nullptr ) {
 						    // no more work in this scheduler.
 						    if ( 0 == ch->workload.priority_0.size() ) {
@@ -388,7 +388,7 @@ void scheduler_impl::wait_for_task_list( TaskList& tl ) {
 
 		// Try pulling in a batch of new work from the scheduler
 		for ( int i = 0; i != WORKER_EAGERNESS; i++ ) {
-			t = this->task_queue.try_pop();
+			t = this->m_task_queue.try_pop();
 			if ( t == nullptr ) {
 				// no more work in this scheduler.
 				if ( 0 == this->workload.priority_0.size() ) {
@@ -464,7 +464,7 @@ void await_tasks::await_suspend( std::coroutine_handle<TaskPromise> h ) noexcept
 bool scheduler_impl::add_tasks( task_list_o* task_list ) {
 	coroutine_handle_t t            = task_list->pop_task();
 	while ( t ) {
-		if ( this->task_queue.try_push( t.address() ) ) {
+		if ( this->m_task_queue.try_push( t.address() ) ) {
 			t = task_list->pop_task();
 		} else {
 			// could not push t onto task queue - we must place it back onto
