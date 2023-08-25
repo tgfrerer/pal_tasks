@@ -163,13 +163,13 @@ class task_list_o {
 		//
 		//
 		// you cannot assume that the object is still alive here.
-		coroutine_handle_t waiting_task_local = this->waiting_task;
+		coroutine_handle_t local_waiting_task = this->waiting_task;
 
-		if ( 0 == --task_count && waiting_task_local ) {
+		if ( 0 == --task_count && local_waiting_task ) {
 			// resume the scope that was waiting on this task list -
 			// potentially deleting *this* - you must not access `this`
 			// anymore after `resume`!
-			waiting_task_local.resume();
+			local_waiting_task.resume();
 			return;
 		}
 		// *** DO NOT ACCESS `this` anymore here as it may have been deleted. ***
