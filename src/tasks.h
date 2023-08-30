@@ -4,8 +4,8 @@
 
 struct TaskPromise; // ffdecl.
 class scheduler_impl; // ffdecl, pimpl
-class task_list_o;    // ffdecl
-class TaskList;       // ffdecl
+class task_buffer_o;    // ffdecl
+class TaskBuffer;       // ffdecl
 struct work_queue_t;  // ffdecl
 
 struct Task : std::coroutine_handle<TaskPromise> {
@@ -26,7 +26,7 @@ struct await_tasks {
 	void await_suspend( std::coroutine_handle<TaskPromise> h ) noexcept;
 	void await_resume() noexcept {};
 
-	task_list_o* p_task_list; // weak: owned by TaskList in calling context. CAREFUL: don't access after await_suspend, or resume has been called
+	task_buffer_o* p_task_buffer; // weak: owned by TaskList in calling context. CAREFUL: don't access after await_suspend, or resume has been called
 };
 
 
@@ -56,13 +56,13 @@ class Scheduler {
 	//
 	// Once this call returns, the TaskList that was given as a parameter
 	// has been consumed, and you should not re-use it.
-	void wait_for_task_list( TaskList& p_t );
+	void wait_for_task_buffer( TaskBuffer& p_t );
 
 	// Execute all tasks in task list, then resume the current task, if
 	// it is a coroutine. This call can be awaited.
 	//
 	// Takes posession of task list object.
-	await_tasks wait_for_task_list_inner( TaskList& p_t );
+	await_tasks wait_for_task_buffer_inner( TaskBuffer& p_t );
 
 	// Create a scheduler with as many hardware threads as possible
 	//  0 ... No worker threads, just one main thread
@@ -73,19 +73,19 @@ class Scheduler {
 	~Scheduler();
 };
 
-class TaskList {
+class TaskBuffer {
 
-	task_list_o* p_impl; // owning
+	task_buffer_o* p_impl; // owning
 
-	TaskList( const TaskList& )            = delete;
-	TaskList( TaskList&& )                 = delete; // move constructor
-	TaskList& operator=( const TaskList& ) = delete;
-	TaskList& operator=( TaskList&& )      = delete; // move assignment
+	TaskBuffer( const TaskBuffer& )            = delete;
+	TaskBuffer( TaskBuffer&& )                 = delete; // move constructor
+	TaskBuffer& operator=( const TaskBuffer& ) = delete;
+	TaskBuffer& operator=( TaskBuffer&& )      = delete; // move assignment
 
   public:
-	TaskList( uint32_t hint_capacity = 1 ); // default constructor
+	TaskBuffer( uint32_t hint_capacity = 1 ); // default constructor
 
-	~TaskList();
+	~TaskBuffer();
 
 	void add_task( Task c );
 
@@ -104,11 +104,11 @@ struct TaskPromise {
 
 #if defined( TASKS_LEGACY )
 	scheduler_impl* scheduler       = nullptr; // weak: owned by scheduler
-	task_list_o*    p_task_list     = nullptr; // weak: owned by scheduler
-	task_list_o*    child_task_list = nullptr; // weak: the task list we are possibly waiting upon
+	task_buffer_o*  p_task_buffer     = nullptr; // weak: owned by scheduler
+	task_buffer_o*  child_task_buffer = nullptr; // weak: the task list we are possibly waiting upon
 #else
 	scheduler_impl* scheduler   = nullptr; // weak: owned by scheduler
-	task_list_o*    p_task_list = nullptr; // weak: owned by scheduler
+	task_buffer_o*  p_task_buffer = nullptr; // weak: owned by scheduler
 	work_queue_t*   p_work_queue = nullptr; // weak: owned by worker thread
 #endif
 };

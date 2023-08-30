@@ -2,6 +2,7 @@
 #include <iostream>
 #include <iomanip>
 
+#include <mutex>
 #include <thread>
 
 int raytracer_main( int argc, char** argv ); // from raytracer.cpp
@@ -24,51 +25,75 @@ int main( int argc, char** argv ) {
 	// -1 ... As many worker threads as cpus, -1
 	Scheduler* scheduler = Scheduler::create( num_threads );
 
+	static std::mutex console_mtx;
+
 	if ( choices && *choices++ == '1' ) {
 
-		std::cout << std::endl;
-		std::cout << "- - - - -SCENARIO 1" << std::endl;
+		{
+			std::scoped_lock lck{ console_mtx };
+			std::cout << std::endl;
+			std::cout << "- - - - -SCENARIO 1" << std::endl;
+			std::cout << std::endl;
+		}
+		auto task_generator = []( Scheduler* scheduler, int i ) -> Task {
+			{
+				std::scoped_lock lck{ console_mtx };
+				std::cout << "primary task " << i << " (tid:" << std::hex << std::this_thread::get_id() << ") " << std::endl;
+			}
+			{
+				TaskBuffer inner_list;
 
-		TaskList tasks{};
-		auto     task_generator = []( Scheduler* scheduler, int i ) -> Task {
-            std::cout << "primary task " << i << " (tid:" << std::hex << std::this_thread::get_id() << ") " << std::endl;
-            {
-                TaskList inner_list;
+				inner_list.add_task( []() -> Task {
+					std::scoped_lock lck{ console_mtx };
+					std::cout << "inside         inner task (tid:" << std::hex << std::this_thread::get_id() << ") " << std::endl;
+					co_return;
+				}() );
+				inner_list.add_task( []() -> Task {
+					std::scoped_lock lck{ console_mtx };
+					std::cout << "inside another inner task (tid:" << std::hex << std::this_thread::get_id() << ") " << std::endl;
+					co_return;
+				}() );
+				co_await suspend_task();
 
-                inner_list.add_task( []() -> Task {
-                    std::cout << "inside         inner task (tid:" << std::hex << std::this_thread::get_id() << ") " << std::endl;
-                    co_return;
-                }() );
-                inner_list.add_task( []() -> Task {
-                    std::cout << "inside another inner task (tid:" << std::hex << std::this_thread::get_id() << ") " << std::endl;
-                    co_return;
-                }() );
-                co_await suspend_task();
+				if ( 0 ) {
+					scheduler->wait_for_task_buffer( inner_list );
+				} else {
+					co_await scheduler->wait_for_task_buffer_inner( inner_list );
+				}
 
-                if ( false ) {
-                    scheduler->wait_for_task_list( inner_list );
-                } else {
-                    co_await scheduler->wait_for_task_list_inner( inner_list );
-                }
+				// put this coroutine back on the scheduler
+			}
+			{
+				std::scoped_lock lck{ console_mtx };
+				std::cout << "resuming primary task " << i << " (tid:" << std::hex << std::this_thread::get_id() << ") " << std::endl;
+			}
 
-                // put this coroutine back on the scheduler
-            }
-            std::cout << "resuming primary task " << i << " (tid:" << std::hex << std::this_thread::get_id() << ") " << std::endl;
+			// we have resumed this coroutine from the scheduler
 
-            // we have resumed this coroutine from the scheduler
-
-            // complete work, signal to the compiler that this is a
-            // coroutine for political reasons.
-            co_return;
+			// complete work, signal to the compiler that this is a
+			// coroutine for political reasons.
+			co_return;
 		};
 
-		// add many more tasks
-		for ( int i = 0; i != 2; i++ ) {
-			tasks.add_task( task_generator( scheduler, i ) );
-		}
+		{
+			TaskBuffer tasks{};
 
-		// Execute all tasks we find on the task list
-		scheduler->wait_for_task_list( tasks );
+			// add many more tasks
+			for ( int i = 0; i != 2; i++ ) {
+				tasks.add_task( task_generator( scheduler, i ) );
+			}
+
+			// Execute all tasks we find on the task list
+			scheduler->wait_for_task_buffer( tasks );
+		}
+		{
+			TaskBuffer tasks_two;
+			// add many more tasks
+			for ( int i = 0; i != 2; i++ ) {
+				tasks_two.add_task( task_generator( scheduler, i ) );
+			}
+			scheduler->wait_for_task_buffer( tasks_two );
+		}
 	}
 
 	// --- vanilla scenario
@@ -76,7 +101,7 @@ int main( int argc, char** argv ) {
 
 		std::cout << std::endl;
 		std::cout << "- - - - -SCENARIO 2" << std::endl;
-		TaskList tasks{};
+		TaskBuffer tasks{};
 		auto     task_generator = []( int i ) -> Task {
             std::cout << "doing some work: " << i++ << std::endl;
 
@@ -97,7 +122,7 @@ int main( int argc, char** argv ) {
 		}
 
 		// Execute all tasks we find on the task list
-		scheduler->wait_for_task_list( tasks );
+		scheduler->wait_for_task_buffer( tasks );
 	}
 	//
 
@@ -117,7 +142,7 @@ int main( int argc, char** argv ) {
 		 * current task system.
 		 */
 
-		TaskList another_task_list{};
+		TaskBuffer another_task_buffer{};
 		auto     coro_generator = []( uint i, Scheduler* sched ) -> Task {
             // std::cout << "first level coroutine: " << std::dec << i++ << " on thread: " << std::hex << std::this_thread::get_id() << std::endl
             //           << std::flush;
@@ -142,11 +167,11 @@ int main( int argc, char** argv ) {
             uint32_t num_tasks = rand_r( &i ) % 10;
 
             // Create a task list for tasks which are spun off from within this task
-            TaskList inner_task_list{};
+            TaskBuffer inner_task_buffer{};
 
             for ( int j = 0; j != num_tasks; j++ ) {
-				inner_task_list.add_task( inner_coro_generator( i, j * 10 ) );
-			}
+                inner_task_buffer.add_task( inner_coro_generator( i, j * 10 ) );
+            }
 
 			std::this_thread::sleep_for( std::chrono::microseconds( rand_r( &i ) % 40000 ) );
 
@@ -159,9 +184,9 @@ int main( int argc, char** argv ) {
 
             if ( 1 ) {
                 // Execute, and wait for tasks that we spin out from this task
-                co_await sched->wait_for_task_list_inner( inner_task_list );
+                co_await sched->wait_for_task_buffer_inner( inner_task_buffer );
             } else {
-                sched->wait_for_task_list( inner_task_list );
+                sched->wait_for_task_buffer( inner_task_buffer );
             }
 
             // Suspend this task again
@@ -174,13 +199,13 @@ int main( int argc, char** argv ) {
 		};
 
 		for ( int i = 0; i != 30; i++ ) {
-			another_task_list.add_task( coro_generator( i * 10, scheduler ) );
+			another_task_buffer.add_task( coro_generator( i * 10, scheduler ) );
 		}
 
 		std::cout << "main program starts wait for task list." << std::endl
 		          << std::flush;
 
-		scheduler->wait_for_task_list( another_task_list );
+		scheduler->wait_for_task_buffer( another_task_buffer );
 	}
 
 	std::cout << "- - - - - Back with main program." << std::endl

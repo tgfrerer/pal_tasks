@@ -240,7 +240,7 @@ void render( int num_threads, const char* choice, const std::vector<Sphere>& sph
 
 			std::cout << "Coroutines: One Task List for all pixels" << std::endl;
 
-			TaskList tl( width * height );
+			TaskBuffer tl( width * height );
 			for ( unsigned y = 0; y < height; ++y ) {
 				for ( unsigned x = 0; x < width; ++x ) {
 					Task t = []( unsigned x, unsigned y, Vec3f* image, std::vector<Sphere> const& spheres, Scheduler* scheduler ) -> Task {
@@ -256,7 +256,7 @@ void render( int num_threads, const char* choice, const std::vector<Sphere>& sph
 				}
 			}
 
-			scheduler->wait_for_task_list( tl );
+			scheduler->wait_for_task_buffer( tl );
 
 		} else {
 
@@ -265,7 +265,7 @@ void render( int num_threads, const char* choice, const std::vector<Sphere>& sph
 			std::cout << "Coroutines: One Task List per row" << std::endl;
 
 			for ( unsigned y = 0; y < height; ++y ) {
-				TaskList tl( width );
+				TaskBuffer tl( width );
 				for ( unsigned x = 0; x < width; ++x ) {
 					Task t = []( unsigned x, unsigned y, Vec3f* image, std::vector<Sphere> const& spheres, Scheduler* scheduler ) -> Task {
 						float xx = ( 2 * ( ( x + 0.5 ) * invWidth ) - 1 ) * angle * aspectratio;
@@ -278,7 +278,7 @@ void render( int num_threads, const char* choice, const std::vector<Sphere>& sph
 
 					tl.add_task( t );
 				}
-				scheduler->wait_for_task_list( tl );
+				scheduler->wait_for_task_buffer( tl );
 			}
 		}
 		delete scheduler;
