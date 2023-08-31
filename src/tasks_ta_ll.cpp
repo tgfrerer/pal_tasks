@@ -73,13 +73,6 @@ struct work_queue_t {
 
 struct Channel {
 
-	// we want to be able to add to the current channel whenever we want
-	// whatever we add to the current channel becomes owned by the current channel -
-	// everything that we add is a move operation
-
-	// multiple threads may add to the channel, only one thread (the channel's thread itself)
-	// will ever remove from the channel - unless we allow for work-stealing.
-
 	std::atomic_flag flag      = false; // signal that the current channel is busy.
 	scheduler_impl*  scheduler = nullptr;
 	work_queue_t     workload{};
@@ -97,49 +90,37 @@ struct Channel {
 };
 
 class task_buffer_o {
-	alignas( 64 ) std::atomic_size_t task_count; // Number of tasks, only gets decremented if task has been completed
-	lockfree_ring_buffer_t tasks;                //
-	coroutine_handle_t     waiting_task;         // If this task_buffer is waited upon, this will be the task to resume once all tasks have completed
+	alignas( 64 ) std::atomic_size_t task_count = {}; // Number of tasks, only gets decremented if task has been completed
+	coroutine_handle_t waiting_task             = {}; // If this task_buffer is waited upon, this will be the task to resume once all tasks have completed
+	std::vector<void*> tasks;
+
   public:
-	task_buffer_o( uint32_t capacity_hint = 32 ) // start with capacity of 32
-	    : tasks( capacity_hint )
+	task_buffer_o( size_t hint_capacity = 1 ) // start with capacity of 32
+	    : tasks()
 	    , task_count( 0 ) {
 	}
 
 	~task_buffer_o() {
 		// If there are any tasks left on the task_buffer, we must destroy them, as we own them.
-		void* task;
-		while ( ( task = this->tasks.try_pop() ) ) {
-			Task::from_address( task ).destroy();
+		for ( auto t : tasks ) {
+			if ( t ) {
+				Task::from_address( t ).destroy();
+			}
 		}
-	}
-
-	// Push a suspended task back onto the end of the task_buffer
-	inline void push_task( coroutine_handle_t const& c ) {
-		tasks.push( c.address() );
-	}
-
-	// Get the next task if possible, if there is no next task,
-	// return an empty coroutine handle.
-	// An empty coroutine handle will compare true to nullptr
-	inline coroutine_handle_t pop_task() {
-		return Task::from_address( tasks.try_pop() );
 	}
 
 	// Add a new task to the task_buffer - only allowed in setup phase,
 	// where only one thread has access to the task_buffer.
 	void add_task( coroutine_handle_t& c ) {
 		c.promise().p_task_buffer = this;
-		tasks.unsafe_initial_dynamic_push( c.address() );
+		tasks.emplace_back( c.address() );
 		++task_count;
 	}
 
 	void tag_all_tasks_with_scheduler( scheduler_impl* p_scheduler ) {
-		tasks.unsafe_for_each(
-		    []( void* c, void* p_scheduler ) {
-			    coroutine_handle_t::from_address( c ).promise().scheduler = static_cast<scheduler_impl*>( p_scheduler );
-		    },
-		    p_scheduler );
+		for ( auto& t : tasks ) {
+			coroutine_handle_t::from_address( t ).promise().scheduler = static_cast<scheduler_impl*>( p_scheduler );
+		}
 	}
 
 	inline size_t get_task_count() {
@@ -173,6 +154,7 @@ class task_buffer_o {
 		// *** DO NOT ACCESS `this` anymore here as it may have been deleted. ***
 	}
 
+	friend struct scheduler_impl;
 	friend struct await_tasks;
 };
 
@@ -240,7 +222,8 @@ class scheduler_impl {
 	await_tasks wait_for_task_buffer_inner( TaskBuffer& p_t );
 
 	// gets all tasks from a task_buffer and appends them to this scheduler's task queue
-	bool add_tasks( task_buffer_o* task_buffer );
+	// potentially blocking, if task_queue is full.
+	void add_tasks( task_buffer_o* task_buffer );
 
 	// Fetch next available task from the scheduler
 	void* get_next_task();
@@ -250,20 +233,16 @@ class scheduler_impl {
 
 // ----------------------------------------------------------------------
 
-bool scheduler_impl::add_tasks( task_buffer_o* task_buffer ) {
-	coroutine_handle_t t = task_buffer->pop_task();
-	while ( t ) {
-		if ( this->m_task_queue.try_push( t.address() ) ) {
-			t = task_buffer->pop_task();
-		} else {
-			// could not push t onto task queue - we must place it back onto
-			// the queue where it came from so that someone else can pick it
-			// up later.
-			task_buffer->push_task( t );
-			return false;
+void scheduler_impl::add_tasks( task_buffer_o* task_buffer ) {
+	// Bring any tasks that we can into task_queue
+	for ( auto& t : task_buffer->tasks ) {
+		while ( false == this->m_task_queue.try_push( t ) ) {
+			// try again
+			std::cout << "Could not insert any more tasks onto the task queue" << std::endl;
+			std::this_thread::sleep_for( std::chrono::microseconds( 10 ) );
 		}
 	}
-	return true;
+	task_buffer->tasks.clear();
 }
 // ----------------------------------------------------------------------
 
@@ -390,13 +369,7 @@ void scheduler_impl::wait_for_task_buffer( TaskBuffer& tl ) {
 
 	// Add current task_buffer to the list of task_buffers that are owned by this scheduler.
 
-	while ( false == this->add_tasks( task_buffer ) ) {
-
-		// Retry adding tasks if we couldn't - this is most likely because
-		// the scheduler buffer was full.
-		std::cout << "CAN'T ADD MORE TASKS" << std::endl;
-		std::this_thread::sleep_for( std::chrono::nanoseconds( 100 ) );
-	};
+	this->add_tasks( task_buffer );
 
 	// Distribute work, as long as there is work to distribute
 
@@ -501,12 +474,7 @@ void await_tasks::await_suspend( std::coroutine_handle<TaskPromise> h ) noexcept
 		p_task_buffer->waiting_task = h;
 
 		// If there are tasks, we move them to the scheduler.
-		while ( false == h.promise().scheduler->add_tasks( p_task_buffer ) ) {
-			// retry adding tasks if we couldn't - this is most likely because
-			// the scheduler buffer was full.
-			std::cout << "CAN'T ADD MORE TASKS" << std::endl;
-			std::this_thread::sleep_for( std::chrono::microseconds( 10 ) );
-		}
+		h.promise().scheduler->add_tasks( p_task_buffer );
 	}
 }
 
