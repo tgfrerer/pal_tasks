@@ -11,6 +11,18 @@ int main( int argc, char** argv ) {
 
 	// raytracer_main( argc, argv );
 
+	std::cout << "* * * * * * * * * * " << std::endl
+	          << "Program version: "
+#if ( defined TASKS_TA_LL )
+	          << "TASKS TA LL" << std::endl
+#elif ( defined TASKS_LEGACY )
+	          << "TASKS LEGACY" << std::endl
+#elif ( defined TASKS_THREAD_AFFINITY )
+	          << "TASKS TASKS_THREAD_AFFINITY" << std::endl
+#endif
+	          << "* * * * * * * * * * " << std::endl
+	          << std::endl;
+
 	// argument 0 is the path to the application
 	// argument 1 is the number of threads specified, if any
 	// argument 2 is which tests to run, a string of 0 or 1

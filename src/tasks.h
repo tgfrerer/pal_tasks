@@ -106,9 +106,13 @@ struct TaskPromise {
 	scheduler_impl* scheduler       = nullptr; // weak: owned by scheduler
 	task_buffer_o*  p_task_buffer     = nullptr; // weak: owned by scheduler
 	task_buffer_o*  child_task_buffer = nullptr; // weak: the task list we are possibly waiting upon
-#else
-	scheduler_impl* scheduler   = nullptr; // weak: owned by scheduler
+#elif defined( TASKS_THREAD_AFFINITY )
+	scheduler_impl* scheduler     = nullptr; // weak: owned by scheduler
 	task_buffer_o*  p_task_buffer = nullptr; // weak: owned by scheduler
 	work_queue_t*   p_work_queue = nullptr; // weak: owned by worker thread
+#elif defined( TASKS_TA_LL )
+	scheduler_impl* scheduler     = nullptr; // weak: owned by scheduler
+	task_buffer_o*  p_task_buffer = nullptr; // weak: owned by scheduler
+	work_queue_t*   p_work_queue  = nullptr; // weak: owned by worker thread
 #endif
 };
