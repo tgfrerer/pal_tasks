@@ -1,2 +1,4 @@
 build
 CMakeLists.txt.user
+/build_benchmark/**/*
+/report_*.csv
