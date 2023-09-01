@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.5)
 
 project(tasks LANGUAGES CXX)
 
-set(TASKS_VARIANT 0)
+set(TASKS_VARIANT 2)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
