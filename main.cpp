@@ -9,8 +9,6 @@ int raytracer_main( int argc, char** argv ); // from raytracer.cpp
 
 int main( int argc, char** argv ) {
 
-	// raytracer_main( argc, argv );
-
 	std::cout << "* * * * * * * * * * " << std::endl
 	          << "Program version: "
 #if ( defined TASKS_TA_LL )
@@ -23,13 +21,15 @@ int main( int argc, char** argv ) {
 	          << "* * * * * * * * * * " << std::endl
 	          << std::endl;
 
+	// raytracer_main( argc, argv );
+	// return 0;
+
 	// argument 0 is the path to the application
 	// argument 1 is the number of threads specified, if any
 	// argument 2 is which tests to run, a string of 0 or 1
 	const int   num_threads = argc >= 2 ? atoi( argv[ 1 ] ) : -1;
 	char const* choices     = argc >= 3 ? argv[ 2 ] : "001";
 
-	// return 0;
 
 	// Create a scheduler with as many hardware threads as possible
 	//  0 ... No worker threads, just one main thread
