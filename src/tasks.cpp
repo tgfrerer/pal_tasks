@@ -87,7 +87,6 @@ class task_buffer_o {
 		return Task::from_address( tasks.try_pop() );
 	}
 
-
 	// Add a new task to the task list - only allowed in setup phase,
 	// where only one thread has access to the task list.
 	void add_task( coroutine_handle_t& c ) {
@@ -276,9 +275,12 @@ scheduler_impl::scheduler_impl( int32_t num_worker_threads ) {
 		    channels.back() );
 		cpu_set_t cpuset;
 		CPU_ZERO( &cpuset );
-		CPU_SET( i + 1, &cpuset );
+		CPU_SET( unsigned( i + 1 ) % std::jthread::hardware_concurrency(), &cpuset );
 		bool err = pthread_setaffinity_np( threads.back().native_handle(), sizeof( cpuset ), &cpuset );
-		assert( err == 0 && "setaffinity did not work" );
+		if ( err ) {
+			std::cout << "setaffinity did not work : error " << std::dec << err << std::endl;
+		}
+		// assert( err == 0 && "setaffinity did not work" );
 	}
 	std::this_thread::sleep_for( std::chrono::milliseconds( 20 ) );
 	for ( int i = 0; i != num_worker_threads; i++ ) {
@@ -309,7 +311,7 @@ await_tasks scheduler_impl::wait_for_task_buffer_inner( TaskBuffer& tl ) {
 	// await_tasks::await_suspend is where control will go next.
 	await_tasks result;
 	result.p_task_buffer = tl.p_impl; // ownership transfer
-	tl.p_impl          = nullptr;   // since the original object does not own, it must not delete.
+	tl.p_impl            = nullptr;   // since the original object does not own, it must not delete.
 
 	return result;
 }
@@ -345,7 +347,7 @@ void await_tasks::await_suspend( std::coroutine_handle<TaskPromise> h ) noexcept
 
 	h.promise().scheduler->async_task_buffers.push( p_task_buffer ); // take ownership of task_buffer into scheduler
 
-	                                                                 // this will drop us back to where resume was called()
+	// this will drop us back to where resume was called()
 }
 // ----------------------------------------------------------------------
 
@@ -407,7 +409,6 @@ void scheduler_impl::wait_for_task_buffer( TaskBuffer& tl ) {
 
 				// We could not fetch a task from the task list - this means
 				// that there are tasks in-progress that we must wait for.
-
 
 				continue;
 			}

@@ -62,15 +62,17 @@ p=subprocess.run('git show --format="%h" --no-patch'.split(" "), capture_output=
 git_hash = p.stdout.split(b'"')[1].decode('utf-8')
 
 for i in range(0,33):
-      print("Starting run {0}".format(i))
-      p = subprocess.run(("sudo /usr/bin/perf stat -o ./perf/perf_{0}.csv -x \\t -r 1 -e duration_time,cpu_core/cycles/,cpu_atom/cycles/,task-clock ./tasks {0} {1} > ./perf/out_{0}.txt".format(i, invocation_param)) .split(" "), capture_output=True, cwd=working_directory)
-      f = open("{0}/perf/out_{1}.txt".format(working_directory,str(i)), 'wb')
-      f.write(p.stdout)
-      f.close()
-      if p.returncode != 0 :
-          print("program errored out: {}".format(p.returncode))
-          exit(p.returncode)
-      print("Completed run {0}\n".format(i))
+    print("Starting run {0}".format(i))
+    cmdline=("sudo /usr/bin/perf stat -o ./perf/perf_{0}.csv -x \\t -r 1 -e duration_time,task-clock ./tasks {0} {1} > ./perf/out_{0}.txt".format(i, invocation_param))
+    print("executing: '{}'\n".format(cmdline))
+    p = subprocess.run( cmdline.split(" "), capture_output=True, cwd=working_directory)
+    f = open("{0}/perf/out_{1}.txt".format(working_directory,str(i)), 'wb')
+    f.write(p.stdout)
+    f.close()
+    if p.returncode != 0 :
+        print("program errored out: {}".format(p.returncode))
+        exit(p.returncode)
+    print("Completed run {0}\n".format(i))
 
 # for all .csv files in directory, fetch the filename and the first cell in the third line and add this as a line in the summary file
 

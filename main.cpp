@@ -30,7 +30,6 @@ int main( int argc, char** argv ) {
 	const int   num_threads = argc >= 2 ? atoi( argv[ 1 ] ) : -1;
 	char const* choices     = argc >= 3 ? argv[ 2 ] : "001";
 
-
 	// Create a scheduler with as many hardware threads as possible
 	//  0 ... No worker threads, just one main thread
 	//  n ... n number of worker threads
@@ -114,7 +113,7 @@ int main( int argc, char** argv ) {
 		std::cout << std::endl;
 		std::cout << "- - - - -SCENARIO 2" << std::endl;
 		TaskBuffer tasks{};
-		auto     task_generator = []( int i ) -> Task {
+		auto       task_generator = []( int i ) -> Task {
             std::cout << "doing some work: " << i++ << std::endl;
 
             // put this coroutine back on the scheduler
@@ -155,7 +154,7 @@ int main( int argc, char** argv ) {
 		 */
 
 		TaskBuffer another_task_buffer{};
-		auto     coro_generator = []( uint i, Scheduler* sched ) -> Task {
+		auto       coro_generator = []( uint i, Scheduler* sched ) -> Task {
             // std::cout << "first level coroutine: " << std::dec << i++ << " on thread: " << std::hex << std::this_thread::get_id() << std::endl
             //           << std::flush;
 
