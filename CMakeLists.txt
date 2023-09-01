@@ -20,7 +20,7 @@ add_compile_definitions(TASKS_THREAD_AFFINITY)
 elseif(TASKS_VARIANT EQUAL 2)
 add_compile_definitions(TASKS_TA_LL)
     set(SOURCES ${SOURCES} src/tasks_ta_ll.cpp)
-endif(TASKS_VARIANT)
+endif()
 
 set(SOURCES ${SOURCES} src/tasks.h)
 set(SOURCES ${SOURCES} src/lockfree_ring_buffer.h)

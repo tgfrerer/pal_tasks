@@ -15,13 +15,14 @@ if status != 0:
     print("git reports uncommitted code. Commit and try again")
     exit(status)
 
-
-if len(sys.argv) != 2:
+if len(sys.argv) < 2:
     print("You must name command line parameter for test program")
     exit(1)
 
 working_directory = os.path.dirname(sys.argv[0])
 script_directory = working_directory
+
+
 
 # create build directory 
 
@@ -45,8 +46,6 @@ if not os.path.exists(measurements_dir): # check if the specified path exists
 working_directory=directory_path
 
 p = subprocess.run("cmake -G Ninja ..".split(" "), capture_output=True, cwd=working_directory)
-p = subprocess.run("ninja".split(" "), capture_output=True, cwd=working_directory)
-
 
 invocation_param = sys.argv[1]
 
@@ -63,15 +62,15 @@ p=subprocess.run('git show --format="%h" --no-patch'.split(" "), capture_output=
 git_hash = p.stdout.split(b'"')[1].decode('utf-8')
 
 for i in range(1,33):
-     print("Starting run {0}".format(i))
-     p = subprocess.run(("sudo /usr/bin/perf stat -o ./perf/perf_{0}.csv -x \\t -r 3 ./tasks {0} {1} > ./perf/out_{0}.txt".format(i, invocation_param)) .split(" "), capture_output=True, cwd=working_directory)
-     f = open("{0}/perf/out_{1}.txt".format(working_directory,str(i)), 'wb')
-     f.write(p.stdout)
-     f.close()
-     if p.returncode != 0 :
-         print("program errored out: {}".format(p.returncode))
-         exit(p.returncode)
-     print("Completed run {0}\n".format(i))
+      print("Starting run {0}".format(i))
+      p = subprocess.run(("sudo /usr/bin/perf stat -o ./perf/perf_{0}.csv -x \\t -r 1 -e duration_time,cpu_core/cycles/,cpu_atom/cycles/,task-clock ./tasks {0} {1} > ./perf/out_{0}.txt".format(i, invocation_param)) .split(" "), capture_output=True, cwd=working_directory)
+      f = open("{0}/perf/out_{1}.txt".format(working_directory,str(i)), 'wb')
+      f.write(p.stdout)
+      f.close()
+      if p.returncode != 0 :
+          print("program errored out: {}".format(p.returncode))
+          exit(p.returncode)
+      print("Completed run {0}\n".format(i))
 
 # for all .csv files in directory, fetch the filename and the first cell in the third line and add this as a line in the summary file
 
@@ -90,11 +89,12 @@ for filename in csv_files:
 
     f.readline() # ignore line 1
     f.readline() # ignore line 2
-    entry = f.readline()
+    wall_clock_entry = f.readline()
     f.close()
 
+    wallclock_time = float(wall_clock_entry.split("\t")[0])  / 1000000.0 # convert to millisec
     num_threads = filename.split(".")[0].split("_")[1]
-    of.write("{}\t{}\n".format( num_threads, entry.split("\t")[0]))
+    of.write("{}\t{:.2f}\n".format( num_threads, wallclock_time))
 
 
 print("Wrote report to file: {}\n".format(report_filename))
